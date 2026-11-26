@@ -364,6 +364,11 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     it('the start renders the next-session line and names every recovery trigger', () => {
       const start = procedures.split(/^## /m)[0].replace(/\s+/g, ' ');
       assert.match(start, /\brender\w*\b[^.]*\bnext[- ]session\b|\bnext[- ]session\b[^.]*\brender\w*\b/i);
+      assert.match(start, /\bstart prompt\b[^.]*\bcommand\b|\bcommand\b[^.]*\bstart prompt\b/i);
+      assert.match(start, /\bfirst line\b[^.]*\blabel\b|\blabel\b[^.]*\bfirst line\b/i);
+      assert.match(start, /\b(?:no|not an?)\b[^.]*\bexplicit opening\b/i);
+      assert.match(start, /\b(?:render\w*|rendered stage)\b[^.]*\b(?:differs?|different|mismatch)\b[^.]*\b(?:says? so|report\w*|tell\w*|state\w*)\b|\b(?:says? so|report\w*|tell\w*|state\w*)\b[^.]*\b(?:render\w*|rendered stage)\b[^.]*\b(?:differs?|different|mismatch)\b/i);
+      assert.match(start, /\b(?:render\w*\b[^.]*\bsucceed\w*|successful render\w*)\b[^.]*\b(?:no|never|not)\b[^.]*\brecover\w*\b|\b(?:no|never|not)\b[^.]*\brecover\w*\b[^.]*\b(?:successful render\w*|render\w*\b[^.]*\bsucceed\w*)\b/i);
       for (const phrase of [
         /\brecover\w*\b/i, /\b(?:no|absent|missing)\b[^.;]*\b(?:section|Next session)\b/i, /\bfree[- ]text\b/i,
         /\bslot file\b[^.]*\b(?:absent|missing)\b/i, /\bslot file\b[^.]*\brefus\w*\b/i,
@@ -380,7 +385,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       assert.match(start, /\b(?:not record-gated|non-record-gated)\b[^.]*\b(?:as named|named stage|opened for)\b/i);
       assert.match(start, /\b(?:no plan|name[s]? no plan)\b[^.]*\b(?:as named|named stage|opened for)\b/i);
       assert.match(start, /\bwriter\b|--write\b/i);
-      assert.match(start, /\b(?:never|not)\b[^.]*\boverwrite\w*\b/i);
+      assert.doesNotMatch(start, /\bnever\s+overwrite\b|\bwrite\s+another\b/i);
+      assert.match(start, /\bwrite\w*\b[^.]*\b(?:one|single|same) slot file\b[^.]*\b(?:over|overwriting|replacing)\b[^.]*\bvalid\w*\b|\boverwrite\w*\b[^.]*\bvalid\w*\b[^.]*\b(?:one|single|same) slot file\b/i);
       assert.match(start, /\bempty-queue\b[^.]*\b(?:user|maintainer)\b[^.]*\bno work\b|\b(?:user|maintainer)\b[^.]*\bno work\b[^.]*\bempty-queue\b/i);
     });
 

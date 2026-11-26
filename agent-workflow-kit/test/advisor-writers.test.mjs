@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as lanes from '../tools/write-lanes.mjs';
 import { kindOf } from '../tools/commands.mjs';
@@ -66,11 +66,11 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     assert.deepEqual(check(rows), []);
   });
 
-  it('has exactly one row per VARIANT_LANES key, forty-seven in total', () => {
+  it('has exactly one row per VARIANT_LANES key, forty-nine in total', () => {
     const rows = readRows(readTable());
     const variantLanes = need(lanes, 'VARIANT_LANES');
     assert.deepEqual(tableMismatches(rows, variantLanes), []);
-    assert.equal(Object.keys(variantLanes).length, 47);
+    assert.equal(Object.keys(variantLanes).length, 49);
   });
 
   it('gives every row the lane returned by laneOf', () => {
@@ -84,8 +84,9 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
   it('names the consoleArgv apply file for every harness or kit row', () => {
     const rows = readRows(readTable());
     const consoleArgv = need(lanes, 'consoleArgv');
+    for (const variant of ['stage-guard', 'stage-guard.not-current']) assert.ok(rows.some((row) => row.variant === variant), variant);
     for (const row of rows.filter(({ lane }) => ['harness', 'kit'].includes(lane))) {
-      assert.equal(row.writer, basename(consoleArgv(row.variant, facts).apply[1]), row.variant);
+      assert.equal(row.writer, relative(facts.toolsDir, consoleArgv(row.variant, facts).apply[1]).split(sep).join('/'), row.variant);
     }
   });
 
@@ -109,15 +110,17 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('counts nine user, seventeen chat, seventeen harness and four kit rows: forty-seven keys', () => {
+  it('counts nine user, seventeen chat, eighteen harness and five kit rows: forty-nine keys', () => {
     const rows = readRows(readTable());
-    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [47, 9, 17, 17, 4], 'row count, then user, chat, harness and kit rows');
-    const named = ['hook-checks', 'source-size.layout', 'source-size.piles', 'agents.not-current', 'gate-hook.not-current', 'state-block.not-current', 'jev-skill.not-current'];
+    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [49, 9, 17, 18, 5], 'row count, then user, chat, harness and kit rows');
+    const named = ['hook-checks', 'source-size.layout', 'source-size.piles', 'agents.not-current', 'gate-hook.not-current', 'state-block.not-current', 'jev-skill.not-current', 'stage-guard', 'stage-guard.not-current'];
     assert.deepEqual([...named, 'gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing', 'jev-skill.earlier'].map((v) => rows.find(({ variant }) => variant === v)), [
       { variant: 'hook-checks', lane: 'harness', writer: 'git-hooks.mjs' }, { variant: 'source-size.layout', lane: 'chat', writer: 'source-size-check.mjs' },
       { variant: 'source-size.piles', lane: 'chat', writer: 'source-size/piles-cli.mjs' },
       { variant: 'agents.not-current', lane: 'kit', writer: 'cheap-agents.mjs' }, { variant: 'gate-hook.not-current', lane: 'kit', writer: 'gate-hook.mjs' },
       { variant: 'state-block.not-current', lane: 'kit', writer: 'state-block-hook.mjs' }, { variant: 'jev-skill.not-current', lane: 'kit', writer: 'jev-skill.mjs' },
+      { variant: 'stage-guard', lane: 'harness', writer: 'stage-write-guard/cli.mjs' },
+      { variant: 'stage-guard.not-current', lane: 'kit', writer: 'stage-write-guard/cli.mjs' },
       undefined, undefined, undefined, undefined]);
   });
 });

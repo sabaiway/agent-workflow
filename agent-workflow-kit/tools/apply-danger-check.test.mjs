@@ -1772,9 +1772,35 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
   });
 });
 
+const OLD = '// an earlier kit hook body\n';
+const LOCAL = '.claude/settings.local.json';
+const bundleOf = (kit) => fs.readFileSync(join(TOOLS, '../references/hooks', kit.bundle));
+const within = (kit) => `scope: within the declared scope of ${kit.variant}`;
+const refusedWrite = (kit, rel) => `refused: ${rel} ${rel} — beyond the declared scope of ${kit.variant}`;
+const run = (f, kit) => {
+  const cli = capture(f, () => { throw new Error('preview spawned'); });
+  return { code: danger.main(argvFor(kit.variant, f), cli.io), lines: cli.lines };
+};
+const asDevice = (t, path, body) => {
+  const original = fs.lstatSync;
+  const mocked = t.mock.method(fs, 'lstatSync', (file, ...args) => file === path ? Object.assign(Object.create(original(file)),
+    { isCharacterDevice: () => true, isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false }) : original(file, ...args));
+  syncBuiltinESMExports();
+  try {
+    return body();
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+  }
+};
+const assertRefusedUnwired = (kit, { code, lines }, title) => {
+  assert.equal(code, 1, `${title}: ${lines.join('\n')}`);
+  assert.ok(lines.includes(refusedWrite(kit, kit.rel)), `${title}: ${lines.join('\n')}`);
+  assert.ok(lines.some((line) => line.startsWith(`refused: ${SETTINGS} ${kit.key} — `)), `${title}: ${lines.join('\n')}`);
+  assert.deepEqual([lines.at(-2), lines.filter((line) => line.startsWith('masked:'))], ['nothing written', []], title);
+};
+
 describe('spec:init-project/S73 the danger check over the two kit hook variants by proof', () => {
-  const OLD = '// an earlier kit hook body\n';
-  const LOCAL = '.claude/settings.local.json';
   const STOP_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"';
   const KITS = [
     { variant: 'gate-hook.not-current', rel: hook.HOOK_FILE_REL, other: '.claude/hooks/state-block-guard.mjs', key: 'hooks.PreToolUse',
@@ -1788,31 +1814,6 @@ describe('spec:init-project/S73 the danger check over the two kit hook variants 
     if (wired === LOCAL) put(join(f.root, LOCAL), JSON.stringify(atKey(kit.key, [entry])));
     if (hookBytes !== null) put(join(f.root, kit.rel), hookBytes);
     return f;
-  };
-  const bundleOf = (kit) => fs.readFileSync(join(TOOLS, '../references/hooks', kit.bundle));
-  const within = (kit) => `scope: within the declared scope of ${kit.variant}`;
-  const refusedWrite = (kit, rel) => `refused: ${rel} ${rel} — beyond the declared scope of ${kit.variant}`;
-  const run = (f, kit) => {
-    const cli = capture(f, () => { throw new Error('preview spawned'); });
-    return { code: danger.main(argvFor(kit.variant, f), cli.io), lines: cli.lines };
-  };
-  const asDevice = (t, path, body) => {
-    const original = fs.lstatSync;
-    const mocked = t.mock.method(fs, 'lstatSync', (file, ...args) => file === path ? Object.assign(Object.create(original(file)),
-      { isCharacterDevice: () => true, isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false }) : original(file, ...args));
-    syncBuiltinESMExports();
-    try {
-      return body();
-    } finally {
-      mocked.mock.restore();
-      syncBuiltinESMExports();
-    }
-  };
-  const assertRefusedUnwired = (kit, { code, lines }, title) => {
-    assert.equal(code, 1, `${title}: ${lines.join('\n')}`);
-    assert.ok(lines.includes(refusedWrite(kit, kit.rel)), `${title}: ${lines.join('\n')}`);
-    assert.ok(lines.some((line) => line.startsWith(`refused: ${SETTINGS} ${kit.key} — `)), `${title}: ${lines.join('\n')}`);
-    assert.deepEqual([lines.at(-2), lines.filter((line) => line.startsWith('masked:'))], ['nothing written', []], title);
   };
   for (const kit of KITS) it(`${kit.variant} over a wired hook: a differing file replaces, an absent one creates, a current one has nothing to change`, (t) => {
     for (const [state, hookBytes] of [['differing', OLD], ['absent', null], ['current', bundleOf(kit)]]) {
@@ -1897,6 +1898,142 @@ describe('spec:init-project/S73 the danger check over the two kit hook variants 
     const answer = { ...real, wirePlanned: false, mergePlanned: false, wiredInProject: true };
     const result = unchanged(unwired, () => danger.checkApply(kit.variant, unwired, { [kit.writer]: () => answer }));
     assert.deepEqual([result.lines.includes(refusedWrite(kit, kit.rel)), result.lines.at(-2)], [true, 'nothing written'], result.lines.join('\n'));
+  });
+});
+
+describe('spec:stage-write-guard/S9 the danger check over stage-guard and stage-guard.not-current by proof', () => {
+  const GUARD = '.claude/hooks/stage-write-guard.mjs';
+  const PRE_TOOL_USE = 'hooks.PreToolUse';
+  const OFFER = { variant: 'stage-guard', rel: GUARD, key: PRE_TOOL_USE, bundle: 'stage-write-guard.mjs' };
+  const KIT = { ...OFFER, variant: 'stage-guard.not-current' };
+  const loadGuard = () => import('./stage-write-guard/index.mjs');
+  const guardTree = (t, { settings = {}, local, hookBytes = OLD } = {}) => {
+    const f = fixture(t);
+    if (settings !== null) put(join(f.root, SETTINGS), JSON.stringify(settings));
+    if (local !== undefined) put(join(f.root, LOCAL), JSON.stringify(local));
+    if (hookBytes !== null) put(join(f.root, GUARD), hookBytes);
+    return f;
+  };
+  const writesOf = (lines) => lines.filter((line) => line.startsWith('writes: ')).sort();
+  const hookWrite = (hookBytes) => `writes: ${GUARD} sha256:${sha(bundleOf(OFFER))}${hookBytes === null ? '' : ` — replaces sha256:${sha(hookBytes)}`}`;
+
+  it('stage-guard prints the hook file and the PreToolUse entry it adds, the entry only while neither settings file is wired', async (t) => {
+    const { buildStageGuardEntry } = await loadGuard();
+    const wiring = atKey(PRE_TOOL_USE, [buildStageGuardEntry()]);
+    const entryLine = lineOf({ key: PRE_TOOL_USE, change: 'added', value: buildStageGuardEntry(), class: CLASSES[4] });
+    const cases = [
+      ['a fresh project', { settings: null, hookBytes: null }, [hookWrite(null), 'writes: .claude/ created', 'writes: .claude/hooks/ created'], [entryLine]],
+      ['an unwired differing hook', {}, [hookWrite(OLD)], [entryLine]],
+      ['a differing hook wired only in settings.local.json', { local: wiring }, [hookWrite(OLD)], []],
+    ];
+    for (const [title, setup, writes, entries] of cases) {
+      const f = guardTree(t, setup);
+      const { code, lines } = unchanged(f, () => run(f, OFFER));
+      assert.equal(code, 0, `${title}: ${lines.join('\n')}`);
+      assert.deepEqual([writesOf(lines), lines.filter((line) => line.startsWith('  '))], [writes.sort(), entries], title);
+      assert.equal(lines.includes(`${SETTINGS}:`), entries.length > 0, title);
+      assert.equal(lines.at(-2), within(OFFER), title);
+    }
+  });
+  it('stage-guard refuses a planted PreToolUse entry beyond its own, naming hooks.PreToolUse', async (t) => {
+    const { STAGE_GUARD_HOOK_COMMAND, STAGE_GUARD_MATCHER, buildStageGuardEntry } = await loadGuard();
+    const f = guardTree(t);
+    const plants = [
+      ['another command under the guard matcher', { ...buildStageGuardEntry(), hooks: [{ type: 'command', command: 'node foreign-guard.mjs' }] }],
+      ['the guard command under another matcher', { ...buildStageGuardEntry(), matcher: 'Bash' }],
+    ];
+    assert.deepEqual(buildStageGuardEntry().matcher, STAGE_GUARD_MATCHER);
+    assert.ok(buildStageGuardEntry().hooks.some(({ command }) => command === STAGE_GUARD_HOOK_COMMAND));
+    for (const [title, value] of plants) {
+      const result = unchanged(f, () => danger.judgeChange({ variant: OFFER.variant,
+        files: [{ path: SETTINGS, before: null, after: atKey(PRE_TOOL_USE, [value]) }], scope: danger.scopeOf(OFFER.variant, f) }));
+      assert.deepEqual(result.refused, [{ path: SETTINGS, key: PRE_TOOL_USE, reason: `beyond the declared scope of ${OFFER.variant}` }], title);
+    }
+  });
+  it('stage-guard: a character-device settings mask exits 3 before judgement, never spawning', (t) => {
+    const f = guardTree(t);
+    unchanged(f, () => asDevice(t, join(f.root, SETTINGS), () => {
+      const spawn = t.mock.fn(() => { throw new Error('masked settings spawned'); });
+      const cli = capture(f, spawn);
+      assert.deepEqual([danger.main(argvFor(OFFER.variant, f), cli.io), cli.lines, cli.errors, spawn.mock.callCount()], [3, [`masked: ${SETTINGS}`], [], 0]);
+    }));
+  });
+  it('stage-guard: the real apply on a copy places the hook and wires its entry, and then has nothing to change', async (t) => {
+    const { buildStageGuardEntry, isStageGuardWired } = await loadGuard();
+    const f = guardTree(t, { settings: { otherKey: 'kept' } });
+    const copy = copyFixture(t, f);
+    const before = snapshot(copy);
+    const result = unchanged(copy, () => danger.checkApply(OFFER.variant, copy));
+    const cli = capture(copy);
+    assert.equal(danger.main([...argvFor(OFFER.variant, copy), '--apply', '--expect', result.digest], cli.io), 0, cli.errors.join('\n'));
+    assert.deepEqual(cli.lines, result.lines);
+    assert.deepEqual(fs.readFileSync(join(copy.root, GUARD)), bundleOf(OFFER));
+    const settings = json(join(copy.root, SETTINGS));
+    assert.deepEqual([settings.otherKey, settings.hooks.PreToolUse, isStageGuardWired(settings)], ['kept', [buildStageGuardEntry()], true]);
+    assertAppliedPaths(copy, before, result, [SETTINGS]);
+    const applied = unchanged(copy, () => danger.checkApply(OFFER.variant, copy));
+    assert.deepEqual(applied.lines.slice(0, -1), [`nothing to change: ${OFFER.variant} is already applied`]);
+  });
+  it('stage-guard.not-current over a wired hook prints the hook file alone: a differing file replaces, an absent one creates, a current one has nothing to change', async (t) => {
+    const { buildStageGuardEntry } = await loadGuard();
+    const wiring = atKey(PRE_TOOL_USE, [buildStageGuardEntry()]);
+    for (const [where, setup] of [['project', { settings: wiring }], ['local', { local: wiring }]]) {
+      for (const [state, hookBytes] of [['differing', OLD], ['absent', null], ['current', bundleOf(KIT)]]) {
+        const f = guardTree(t, { ...setup, hookBytes });
+        const expected = state === 'current' ? [`nothing to change: ${KIT.variant} is already applied`]
+          : [hookWrite(state === 'differing' ? OLD : null), ...(state === 'absent' ? ['writes: .claude/hooks/ created'] : []), within(KIT)];
+        const { code, lines } = unchanged(f, () => run(f, KIT));
+        assert.deepEqual([code, lines.slice(0, -1)], [0, expected], `${where} ${state}`);
+      }
+    }
+  });
+  it('stage-guard.not-current over an unwired hook refuses each planned write and the planned entry at exit 1', async (t) => {
+    const { buildStageGuardEntry } = await loadGuard();
+    const cases = [
+      ['differing', OLD, {}],
+      ['absent', null, {}],
+      ['another matcher', OLD, atKey(PRE_TOOL_USE, [{ ...buildStageGuardEntry(), matcher: 'Bash' }])],
+      ['another command', OLD, atKey(PRE_TOOL_USE, [{ ...buildStageGuardEntry(), hooks: [{ type: 'command', command: 'node foreign-guard.mjs' }] }])],
+    ];
+    for (const [title, hookBytes, settings] of cases) {
+      const f = guardTree(t, { settings, hookBytes });
+      unchanged(f, () => {
+        const result = run(f, KIT);
+        assertRefusedUnwired(KIT, result, title);
+        if (hookBytes === null) assert.ok(result.lines.includes(refusedWrite(KIT, '.claude/hooks')), title);
+      });
+    }
+  });
+  it('stage-guard.not-current: the real apply on a copy writes exactly the hook file, both settings files byte-equal, and a file edited after the yes is exit 5', async (t) => {
+    const { buildStageGuardEntry } = await loadGuard();
+    const f = guardTree(t, { settings: atKey(PRE_TOOL_USE, [buildStageGuardEntry()]) });
+    put(join(f.root, LOCAL), '{"otherLocal":"kept"}\n');
+    const copy = copyFixture(t, f);
+    const before = snapshot(copy);
+    const settingsBytes = () => [SETTINGS, LOCAL].map((rel) => fs.readFileSync(join(copy.root, rel)));
+    const settingsBefore = settingsBytes();
+    const result = unchanged(copy, () => danger.checkApply(KIT.variant, copy));
+    const cli = capture(copy);
+    assert.equal(danger.main([...argvFor(KIT.variant, copy), '--apply', '--expect', result.digest], cli.io), 0, cli.errors.join('\n'));
+    assert.deepEqual(fs.readFileSync(join(copy.root, GUARD)), bundleOf(KIT));
+    assert.deepEqual(settingsBytes(), settingsBefore);
+    assertAppliedPaths(copy, before, result, []);
+    const first = unchanged(f, () => danger.checkApply(KIT.variant, f));
+    put(join(f.root, GUARD), '// edited after the yes\n');
+    const edited = capture(f, () => { throw new Error('edited hook spawned'); });
+    assert.equal(danger.main([...argvFor(KIT.variant, f), '--apply', '--expect', first.digest], edited.io), 5);
+  });
+  it('stage-guard.not-current admits only the guard file, refuses a planted entry over a wired hook, and judges the wiring itself, never from the writer answer', async (t) => {
+    const { buildStageGuardEntry, writeStageGuard } = await loadGuard();
+    const f = guardTree(t, { settings: atKey(PRE_TOOL_USE, [buildStageGuardEntry()]) });
+    const scope = danger.scopeOf(KIT.variant, f);
+    assert.deepEqual([GUARD, hook.HOOK_FILE_REL, '.claude/hooks/state-block-guard.mjs', SETTINGS].map((rel) => scope.admitsPath(join(f.root, rel))), [true, false, false, false]);
+    const planted = danger.judgeChange({ variant: KIT.variant, files: [{ path: SETTINGS, before: {}, after: atKey(PRE_TOOL_USE, [buildStageGuardEntry()]) }], scope });
+    assert.deepEqual(planted.refused.map(({ path, key }) => ({ path, key })), [{ path: SETTINGS, key: PRE_TOOL_USE }]);
+    const unwired = guardTree(t, { hookBytes: null });
+    const answer = { ...writeStageGuard({ cwd: unwired.root, dryRun: true }), mergePlanned: false };
+    const result = unchanged(unwired, () => danger.checkApply(KIT.variant, unwired, { writeStageGuard: () => answer }));
+    assert.deepEqual([result.lines.includes(refusedWrite(KIT, GUARD)), result.lines.at(-2)], [true, 'nothing written'], result.lines.join('\n'));
   });
 });
 

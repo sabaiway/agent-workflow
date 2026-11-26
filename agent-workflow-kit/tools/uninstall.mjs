@@ -25,7 +25,7 @@
 import { existsSync, statSync, lstatSync, readlinkSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
 import os from 'node:os';
-import { AGENTS_FILE, CLAUDE_FILE, DOCS_TREE, GIT_EXCLUDE, PLANS, PRE_COMMIT, SETTINGS, SETTINGS_LOCAL } from '../references/scripts/shared/index.mjs';
+import { AGENTS_FILE, CLAUDE_FILE, DOCS_TREE, GIT_EXCLUDE, PLANS, PRE_COMMIT, SETTINGS, SETTINGS_LOCAL, STAGE_GUARD_HOOK } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { surveyFamily, surveyProject, FAMILY_MEMBERS, classifyMember, OK } from './family-registry.mjs';
 import { assertContainedRealPath, removeTreeManaged, unlinkManaged, MANAGED_LINK_CONFLICT } from './fs-safe.mjs';
@@ -272,7 +272,7 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
     }
     const settings = claudeDirForeign || !reachable(settingsPath) || settingsUnread ? null : readRaw(settingsPath);
     const settingsSeams = detectSettingsSeams(settings);
-    if (settingsSeams.attribution || settingsSeams.permissions || settingsSeams.gateHook || settingsSeams.mcp) {
+    if (settingsSeams.attribution || settingsSeams.permissions || settingsSeams.gateHook || settingsSeams.stageGuard || settingsSeams.mcp) {
       items.push({
         surface: 'settings',
         path: settingsPath,
@@ -302,6 +302,12 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
         class: REPORT_ONLY,
         reason: 'a PreToolUse entry wiring the kit-placed gate-approval hook is present in this file — remove it by hand to unwire (the tool never edits settings)',
         hand: `edit ${shq(localSettingsPath)} → remove the PreToolUse entry whose command runs ${GATE_HOOK_FILE_REL} (keep the rest of your settings)`,
+      });
+    }
+    if (localSeams.stageGuard) {
+      items.push({
+        surface: 'settings', path: localSettingsPath, class: REPORT_ONLY,
+        reason: STAGE_GUARD_SEAM_REASON, hand: `edit ${shq(localSettingsPath)} → ${STAGE_GUARD_SEAM_HAND} (keep the rest of your settings)`,
       });
     }
     const gateHookPath = join(dir, GATE_HOOK_FILE_REL);
@@ -726,12 +732,13 @@ const jsonStringContains = (value, needle) => {
 // substring probe. Deliberately BROADER than the writer's exact-command check (any string mentioning
 // the placed path counts): over-detection preserves the hook file, under-detection could remove a
 // still-wired one — so the fallback errs toward wired.
-const settingsMentionsGateHook = (settings) => {
+const settingsMentionsPath = (settings, rel) => {
   const parsed = (() => { try { return JSON.parse(settings); } catch { return null; } })();
   return parsed !== null && typeof parsed === 'object'
-    ? jsonStringContains(parsed, GATE_HOOK_FILE_REL)
-    : settings.includes(GATE_HOOK_FILE_REL);
+    ? jsonStringContains(parsed, rel)
+    : settings.includes(rel);
 };
+const settingsMentionsGateHook = (settings) => settingsMentionsPath(settings, GATE_HOOK_FILE_REL);
 
 // Detect the three settings.json seams the family may have written: the attribution edit
 // (`includeCoAuthoredBy`), the velocity profile (`permissions.defaultMode` / `permissions.allow`),
@@ -758,8 +765,9 @@ const settingsMentionsMcp = (settings, parsed) => {
 };
 
 const detectSettingsSeams = (settings) => {
-  if (settings == null) return { attribution: false, permissions: false, gateHook: false, mcp: false, parsed: true };
+  if (settings == null) return { attribution: false, permissions: false, gateHook: false, stageGuard: false, mcp: false, parsed: true };
   const gateHook = settingsMentionsGateHook(settings);
+  const stageGuard = settingsMentionsPath(settings, STAGE_GUARD_HOOK);
   const parsed = (() => { try { return JSON.parse(settings); } catch { return null; } })();
   const mcp = settingsMentionsMcp(settings, parsed);
   if (parsed == null || typeof parsed !== 'object') {
@@ -769,6 +777,7 @@ const detectSettingsSeams = (settings) => {
       attribution: settings.includes('includeCoAuthoredBy'),
       permissions: settings.includes('"permissions"') && (settings.includes('"defaultMode"') || settings.includes('"allow"')),
       gateHook,
+      stageGuard,
       mcp,
       parsed: false,
     };
@@ -776,12 +785,14 @@ const detectSettingsSeams = (settings) => {
   const perms = parsed.permissions;
   const permissions = perms != null && typeof perms === 'object'
     && (Object.prototype.hasOwnProperty.call(perms, 'defaultMode') || Object.prototype.hasOwnProperty.call(perms, 'allow'));
-  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions, gateHook, mcp, parsed: true };
+  return { attribution: Object.prototype.hasOwnProperty.call(parsed, 'includeCoAuthoredBy'), permissions, gateHook, stageGuard, mcp, parsed: true };
 };
 
 const ATTRIBUTION_REASON = 'we set "includeCoAuthoredBy": false here — review/remove that key by hand (the file may hold your own settings)';
 const PERMISSIONS_REASON = 'a "permissions.defaultMode" and/or "permissions.allow" key is present in this file — if the velocity profile seeded them, review/remove by hand (no ownership marker is stored); otherwise leave them';
 const GATE_HOOK_SEAM_REASON = `a PreToolUse entry wiring the kit-placed gate-approval hook (${GATE_HOOK_FILE_REL}) is present — remove that entry by hand to unwire it (the tool never edits settings)`;
+const STAGE_GUARD_SEAM_REASON = `this settings file mentions the kit-placed stage write guard (${STAGE_GUARD_HOOK}) — if a PreToolUse entry runs it, the guard keeps refusing code writes in a stage recorded as writing no code, kit or no kit; verify and remove that entry by hand (the tool never edits settings)`;
+const STAGE_GUARD_SEAM_HAND = `remove the PreToolUse entry whose command runs ${STAGE_GUARD_HOOK}`;
 
 const MCP_SEAM_REASON = `the MCP registration keys for "${MCP_SERVER_NAME}" are present in this file ("${MCP_ENABLED_KEY}" and/or the ${MCP_ALLOW_RULES.join(' / ')} allow rules) — remove them by hand to unregister the typed channel (the tool never edits settings)`;
 // Over a file that could not be PARSED, the same seams are probed by substring — so any string or
@@ -795,6 +806,7 @@ const settingsSeamReason = (seams) =>
     ...(seams.attribution ? [ATTRIBUTION_REASON] : []),
     ...(seams.permissions ? [PERMISSIONS_REASON] : []),
     ...(seams.gateHook ? [GATE_HOOK_SEAM_REASON] : []),
+    ...(seams.stageGuard ? [STAGE_GUARD_SEAM_REASON] : []),
     ...(seams.mcp ? [MCP_SEAM_REASON] : []),
   ].join('. Also: ');
 
@@ -807,6 +819,7 @@ const settingsSeamHand = (seams, p) => {
           : 'if the velocity profile seeded "permissions.defaultMode"/"permissions.allow", review/remove them by hand']
       : []),
     ...(seams.gateHook ? [`remove the PreToolUse entry whose command runs ${GATE_HOOK_FILE_REL}`] : []),
+    ...(seams.stageGuard ? [STAGE_GUARD_SEAM_HAND] : []),
     ...(seams.mcp ? [`remove "${MCP_SERVER_NAME}" from "${MCP_ENABLED_KEY}" and the ${MCP_ALLOW_RULES.join(" / ")} allow rules`] : []),
   ];
   return `edit ${shq(p)} → ${clauses.join(' and ')} (keep the rest of your settings)`;

@@ -17,6 +17,10 @@
       "word": "hook"
     },
     {
+      "path": "agent-workflow-kit/references/hooks/stage-write-guard.mjs",
+      "word": "hook"
+    },
+    {
       "path": "agent-workflow-kit/references/hooks/state-block-guard.mjs",
       "word": "hook"
     },
@@ -921,6 +925,10 @@
     {
       "path": "agent-workflow-kit/tools/stage-render/cli.mjs",
       "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/stage-write-guard/cli.mjs",
+      "word": "hook"
     },
     {
       "path": "agent-workflow-kit/tools/state-block-hook.mjs",

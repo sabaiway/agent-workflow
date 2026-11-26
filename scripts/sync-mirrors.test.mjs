@@ -3,9 +3,18 @@ import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT, BRIDGE_DIRS, TEMPLATE_HARD_EXCLUDES, planAllMirrors, renderGateHookLists, syncBridgeMirror } from './sync-mirrors.mjs';
-import { makeRoot, seedFamily, run, SERVICES_REL, FACTS_FILE } from './sync-mirrors-fixture.mjs';
+import { makeRoot, seedFamily as seedExistingFamily, run, SERVICES_REL, FACTS_FILE } from './sync-mirrors-fixture.mjs';
 import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
 import { GATES, LANES } from '../agent-workflow-memory/references/scripts/shared/index.mjs';
+const STAGE_GUARD_REL = 'agent-workflow-kit/references/hooks/stage-write-guard.mjs';
+const STAGE_TABLE_REL = 'agent-workflow-kit/tools/stage-render/stages.json';
+const seedFamily = (root) => {
+  seedExistingFamily(root);
+  const source = join(REPO_ROOT, STAGE_GUARD_REL);
+  if (existsSync(source)) writeFileSync(join(root, STAGE_GUARD_REL), readFileSync(source));
+  mkdirSync(join(root, STAGE_TABLE_REL, '..'), { recursive: true });
+  writeFileSync(join(root, STAGE_TABLE_REL), readFileSync(join(REPO_ROOT, STAGE_TABLE_REL)));
+};
 describe('in-sync tree', () => {
   it('--check exits 0 with zero would-be changes despite the hard-excluded divergence', () => {
     const root = makeRoot();
@@ -391,6 +400,51 @@ describe('spec:init-project/S78 gate-hook-lists sync and refusals', () => {
       }
     });
   }
+});
+describe('stage-guard-locations sync', () => {
+  const FAMILY = 'stage-guard-locations';
+  it('plans stage-guard-locations immediately after gate-hook-lists', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    assert.deepEqual(planAllMirrors(root).slice(0, 3).map(({ family }) => family), ['service-facts', 'gate-hook-lists', FAMILY]);
+  });
+  it('checks stage guard drift without writes, restores only the generated region, then checks clean', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    const path = join(root, STAGE_GUARD_REL);
+    const original = readFileSync(path, 'utf8');
+    const begin = original.match(/^\/\/[^\n]*generated[^\n]*sync-mirrors\.mjs[^\n]*$/m)?.[0];
+    const end = original.match(/^\/\/[^\n]*end[^\n]*generated[^\n]*$/m)?.[0];
+    assert.ok(begin && end && original.indexOf(begin) < original.indexOf(end), 'generated region begin and end lines');
+    const region = original.slice(original.indexOf(begin), original.indexOf(end) + end.length);
+    const expected = original.replace(begin, `// preserved above the generated region\n${begin}`).replace(end, `${end}\n// preserved below the generated region`);
+    const drifted = expected.replace(region, `${begin}\n// drifted generated region\n${end}`);
+    assert.notEqual(drifted, expected);
+    writeFileSync(path, drifted);
+    const check = run(['--check'], root);
+    assert.equal(check.code, 1, check.errText);
+    assert.ok(check.text.split('\n').includes(`${FAMILY}: would write ${STAGE_GUARD_REL}`), check.text);
+    assert.deepEqual(readFileSync(path), Buffer.from(drifted));
+    const apply = run([], root);
+    assert.equal(apply.code, 0, apply.errText);
+    assert.deepEqual(readFileSync(path), Buffer.from(expected));
+    const clean = run(['--check'], root);
+    assert.equal(clean.code, 0, `${clean.text}\n${clean.errText}`);
+  });
+  it('writes the stage ids of the root\'s own table, and refuses by name a table it cannot read or load', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    const table = JSON.parse(readFileSync(join(root, STAGE_TABLE_REL), 'utf8'));
+    assert.ok(readFileSync(join(root, STAGE_GUARD_REL), 'utf8').includes(`const STAGE_IDS = ${JSON.stringify(Object.keys(table.stages))};`));
+    rmSync(join(root, STAGE_TABLE_REL));
+    const absent = run(['--check'], root);
+    assert.equal(absent.code, 1, absent.text);
+    assert.ok(`${absent.text}\n${absent.errText}`.includes(STAGE_TABLE_REL), `${absent.text}\n${absent.errText}`);
+    writeFileSync(join(root, STAGE_TABLE_REL), '{}\n');
+    const refused = run(['--check'], root);
+    assert.equal(refused.code, 1, refused.text);
+    assert.ok(`${refused.text}\n${refused.errText}`.includes(STAGE_TABLE_REL), `${refused.text}\n${refused.errText}`);
+  });
 });
 describe('the real tree', () => {
   it('the current repo is fully in sync (release invariant): --check exits 0', () => {

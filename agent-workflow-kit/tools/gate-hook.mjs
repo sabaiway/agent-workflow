@@ -94,6 +94,8 @@ const ERROR_PREFIX = '[agent-workflow-kit]';
 const SETTINGS_JSON_INDENT = 2;
 const JSON_NEWLINE_PATTERN = /\n/gu;
 
+const GATE_HOOK_BYPASS_REASON = 'refusing because it auto-approves Bash';
+
 const TARGET_PLACE = 'place';
 const TARGET_CURRENT = 'already-current';
 const TARGET_DIVERGED = 'diverged';
@@ -192,6 +194,28 @@ export const assertDirSafe = (absPath, relPath, fs) => {
   if (!stat.isDirectory()) throw makeGateHookError(GATE_HOOK_SYMLINK, `${relPath} exists but is not a directory — refusing to write through it`);
 };
 
+export const assertSafeModes = (projectData, localData, bypassReason) => {
+  const { bypassPermissionsPresent, unsafeModePresent } = resolveEffectiveMode(projectData, localData);
+  if (bypassPermissionsPresent) {
+    throw makeGateHookError(GATE_HOOK_UNSAFE_MODE, `${UNSAFE_BYPASS_MODE} appears in Claude settings - ${bypassReason}`);
+  }
+  if (unsafeModePresent) {
+    throw makeGateHookError(
+      GATE_HOOK_UNSAFE_MODE,
+      `an unsafe or unknown permissions.defaultMode is present in Claude settings - accepted modes: ${SAFE_DEFAULT_MODES.join(', ')}`,
+    );
+  }
+};
+
+export const assertStampCurrent = (stamp) => {
+  if (stamp !== EXPECTED_WORKFLOW_VERSION) {
+    throw makeGateHookError(
+      GATE_HOOK_STAMP,
+      `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${stamp ?? 'none'}) — run init/upgrade first`,
+    );
+  }
+};
+
 export const assertSettingsWritable = (absPath, fs) => {
   const stat = lstatNoFollow(absPath, fs);
   if (stat !== null && !stat.isFile()) {
@@ -277,17 +301,7 @@ export const preflightGateHook = ({ cwd }, deps = {}) => {
   assertSettingsWritable(join(projectDir, SETTINGS_FILE), fs);
   const projectSettings = readSettingsFile(join(projectDir, SETTINGS_FILE), { ...deps, cwd: projectDir });
   const localSettings = readSettingsFile(join(projectDir, SETTINGS_LOCAL_FILE), { ...deps, cwd: projectDir });
-  const { bypassPermissionsPresent, unsafeModePresent } = resolveEffectiveMode(projectSettings.data, localSettings.data);
-
-  if (bypassPermissionsPresent) {
-    throw makeGateHookError(GATE_HOOK_UNSAFE_MODE, `${UNSAFE_BYPASS_MODE} appears in Claude settings - refusing because it auto-approves Bash`);
-  }
-  if (unsafeModePresent) {
-    throw makeGateHookError(
-      GATE_HOOK_UNSAFE_MODE,
-      `an unsafe or unknown permissions.defaultMode is present in Claude settings - accepted modes: ${SAFE_DEFAULT_MODES.join(', ')}`,
-    );
-  }
+  assertSafeModes(projectSettings.data, localSettings.data, GATE_HOOK_BYPASS_REASON);
   assertHooksShape(projectSettings.data, SETTINGS_FILE);
 
   const wiredInProject = isHookWired(projectSettings.data);
@@ -309,12 +323,7 @@ export const writeGateHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const base = { placePlanned, replacePlanned, wirePlanned, ...preflight };
   if (dryRun) return { wrote: false, dryRun: true, ...base };
 
-  if (!preflight.stampOk) {
-    throw makeGateHookError(
-      GATE_HOOK_STAMP,
-      `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${preflight.stamp ?? 'none'}) — run init/upgrade first`,
-    );
-  }
+  assertStampCurrent(preflight.stamp);
 
   // Place FIRST, then wire — a wired-but-missing hook would error on every Bash call.
   const hookAbs = join(preflight.projectDir, HOOK_FILE_REL);
@@ -456,12 +465,7 @@ export const writeReadLane = ({ cwd, dryRun = true } = {}, deps = {}) => {
       `${HOOK_FILE_REL} is placed and current but NOT wired into ${SETTINGS_FILE} — the read-lane cannot fire. Wire it first:\n  ${applyGateHookCommand(plan.root)}\nthen re-run with --read-lane.`,
     );
   }
-  if (!stampOk) {
-    throw makeGateHookError(
-      GATE_HOOK_STAMP,
-      `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${stamp ?? 'none'}) — run init/upgrade first`,
-    );
-  }
+  assertStampCurrent(stamp);
   if (plan.already) return { wrote: false, dryRun: false, currency, wired, stamp, stampOk, ...plan };
   const body = `${JSON.stringify(plan.merged, null, SETTINGS_JSON_INDENT)}\n`;
   writeDocsAiFileAtomic(plan.root, LANES_REL, body, deps, { stop: laneStop, noun: 'the read-lane toggle' });

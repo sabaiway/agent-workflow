@@ -1088,6 +1088,13 @@ describe('codex-exec.sh — --help contract (manifest-pinned)', { concurrency: 2
     assert.equal(norm(helpSection(help, 'Notes:').join(' ')), norm(EXEC_CONTRACT.notes.join(' ')));
   });
 
+  it('Receipt names the aw-plan-approval stop: a nonced run without a matching approval refuses pre-spend', async () => {
+    const receipt = norm(helpSection(runHelp('--help').stdout, 'Receipt:').join(' '));
+    const sentence = receipt.split(/(?<=\.)\s+/).find((part) => part.includes('aw-plan-approval'));
+    assert.ok(sentence, 'the Receipt section names the aw-plan-approval stop');
+    for (const word of [/nonce/i, /approval/i, /match/i, /pre-spend/i]) assert.match(sentence, word);
+  });
+
   it('--help after the -- separator is passthrough payload, never intercepted', async () => {
     const sb = makeSandbox();
     const r = await run(sb, { args: ['-', '--', '--help'], input: 'go' });

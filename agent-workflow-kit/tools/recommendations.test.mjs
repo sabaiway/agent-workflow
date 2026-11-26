@@ -1112,13 +1112,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; seventeen harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; eighteen harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
   });
 });
 
@@ -1147,7 +1147,7 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     assert.doesNotMatch(formatRecommendations(built), /--reseed/u);
   });
 
-  for (const variant of ['gate-hook', 'state-block']) {
+  for (const variant of ['gate-hook', 'state-block', 'stage-guard']) {
     it(`${variant} renders the harness check immediately before its apply without HAND-APPLY`, () => {
       const { root, item } = buildHookItem(variant);
       assert.ok(item, variant);
@@ -1228,7 +1228,55 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains seventeen harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17));
+  it('VARIANT_LANES contains eighteen harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
+});
+
+describe('spec:stage-write-guard/S8 the stage-guard key: the offer while unwired, stage-guard.not-current while wired and not current, nothing when current', () => {
+  const GUARD = '.claude/hooks/stage-write-guard.mjs';
+  const LOCAL = '.claude/settings.local.json';
+  const OLD = '// an earlier stage guard body\n';
+  const OFFER_WHAT = 'refuse a code or test write through the edit tools while the recorded stage writes no code';
+  const OFFER_BENEFIT = 'prevention — a stage that writes no code cannot write it through the edit tools';
+  const KIT_WHAT = `${GUARD} is absent or differs from the body the kit writes for it — written with that body, with no question`;
+  const KIT_BENEFIT = 'currency — a hook you wired runs the body the kit writes for it today';
+  const readBundle = () => readFileSync(join(HERE, '..', 'references', 'hooks', 'stage-write-guard.mjs'));
+  const project = (t, { wired, entry, file }) => {
+    const root = makeProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+    const settings = { hooks: { PreToolUse: [entry] } };
+    writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify(wired === 'project' ? settings : {}));
+    if (wired === 'local') writeFileSync(join(root, LOCAL), JSON.stringify(settings));
+    if (file !== undefined) writeFileSync(join(root, GUARD), file);
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    return { root, items: built.items.filter((item) => item.key === 'stage-guard'), skips: built.skips.filter((skip) => skip.key === 'stage-guard') };
+  };
+  const rows = [
+    ['unwired, no file', { wired: null }, 'offer'],
+    ['unwired, a differing file', { wired: null, file: OLD }, 'offer'],
+    ['the guard command under another matcher', { wired: 'project', matcher: 'Bash', file: OLD }, 'offer'],
+    ['wired, an absent file', { wired: 'project' }, 'kit'],
+    ['wired, a differing file', { wired: 'project', file: OLD }, 'kit'],
+    ['wired only in settings.local.json, a differing file', { wired: 'local', file: OLD }, 'kit'],
+    ['wired, a current file', { wired: 'project', file: 'current' }, 'nothing'],
+  ];
+  for (const [label, setup, expected] of rows) it(`stage-guard: ${label}`, async (t) => {
+    const { buildStageGuardEntry } = await import('./stage-write-guard/index.mjs');
+    const entry = setup.matcher ? { ...buildStageGuardEntry(), matcher: setup.matcher } : buildStageGuardEntry();
+    const { root, items, skips } = project(t, { wired: setup.wired, entry, file: setup.file === 'current' ? readBundle() : setup.file });
+    const variant = expected === 'kit' ? 'stage-guard.not-current' : 'stage-guard';
+    assert.deepEqual([items.map((item) => item.variant), skips], [expected === 'nothing' ? [] : [variant], []], JSON.stringify(skips));
+    if (expected === 'nothing') return;
+    const [item] = items;
+    const slot = need(lanes, 'applySlot')(variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+    assert.deepEqual([item.lane, item.check, item.apply], [expected === 'kit' ? 'kit' : 'harness', slot.check, slot.apply]);
+    if (expected === 'offer') {
+      assert.deepEqual([item.what, item.benefit], [OFFER_WHAT, OFFER_BENEFIT]);
+      return;
+    }
+    assert.deepEqual([item.severity, item.what, item.benefit, item.detail], [SEVERITY_OPTIONAL, KIT_WHAT, KIT_BENEFIT, `writes: ${GUARD}`]);
+    assert.ok(KIT_WHAT.length <= ITEM_LINE_CAP);
+  });
 });
 
 // This item exists because its ABSENCE fired: kit 3.14.0 shipped the state-block detector with a mode
@@ -3000,7 +3048,7 @@ describe('recommendations — the worktrees-dir arming item', () => {
 });
 
 describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
-  it('the harness variant count is seventeen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17));
+  it('the harness variant count is eighteen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
   const makeHarnessProject = () => {
     const root = makeProject();
     const dir = join(root, 'farm');
@@ -3699,7 +3747,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
     });
   }
-  it('the harness variant count is seventeen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17));
+  it('the harness variant count is eighteen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
 });
 
 describe('spec:init-project/S54 the advisor arms by their tables', () => {

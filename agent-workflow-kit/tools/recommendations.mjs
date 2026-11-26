@@ -34,7 +34,7 @@ import { readFileSync, readdirSync, lstatSync, existsSync, statSync } from 'node
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DOCS_TREE, GATES, LANES } from '../references/scripts/shared/index.mjs';
+import { DOCS_TREE, GATES, LANES, STAGE_GUARD_HOOK } from '../references/scripts/shared/index.mjs';
 import {
   preflightVelocityProfile,
   planVelocityProfile,
@@ -50,6 +50,7 @@ import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
 import { LANE_KIT, laneOf, applySlot, consoleArgv } from './write-lanes.mjs';
 import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_FILE_REL, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired, writeStateBlockHook } from './state-block-hook.mjs';
 import { HOOK_FILE_REL, HOOKS_DIR, writeGateHook } from './gate-hook.mjs';
+import { isStageGuardWired, writeStageGuard } from './stage-write-guard/index.mjs';
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
@@ -208,6 +209,8 @@ export const SEVERITIES = Object.freeze({
   'read-lane': SEVERITY_OPTIONAL,
   'state-block': SEVERITY_OPTIONAL,
   'state-block.not-current': SEVERITY_OPTIONAL,
+  'stage-guard': SEVERITY_OPTIONAL,
+  'stage-guard.not-current': SEVERITY_OPTIONAL,
   'mcp-channel': SEVERITY_OPTIONAL,
   'mcp-channel.differing': SEVERITY_ATTENTION,
   agents: SEVERITY_OPTIONAL,
@@ -304,6 +307,8 @@ export const WHATS = Object.freeze({
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
   'state-block.not-current': `${STATE_BLOCK_HOOK_FILE_REL} is absent or differs from the body the kit writes for it — written with that body, with no question`,
+  'stage-guard': 'refuse a code or test write through the edit tools while the recorded stage writes no code',
+  'stage-guard.not-current': `${STAGE_GUARD_HOOK} is absent or differs from the body the kit writes for it — written with that body, with no question`,
   'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} bundled subagent vehicle(s) not current (Claude Code) — {ro} read-only, {au} author, {ex} full-tool executor; the apply PREVIEWS first',
@@ -373,6 +378,7 @@ export const BENEFITS = Object.freeze({
   enforcement: 'enforcement — bundled checks and the pre-commit hook keep caps, archives, and the generated index current',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
+  'stage-guard': 'prevention — a stage that writes no code cannot write it through the edit tools',
   'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
   agents: 'cost and quiet — cheap-model mechanical work, no shell on a read-only vehicle or the author; the executor carries slices you verify',
   'executor-vehicle': 'carrier readiness — a slot you configured subagent dispatches the subagent it names instead of silently running solo',
@@ -392,6 +398,7 @@ export const VARIANT_BENEFITS = Object.freeze({
   'agents.not-current': 'currency — each kit agent file carries the body the kit writes for it today, model and effort where docs/ai/vehicles.json names them',
   'gate-hook.not-current': HOOK_CURRENCY_BENEFIT,
   'state-block.not-current': HOOK_CURRENCY_BENEFIT,
+  'stage-guard.not-current': HOOK_CURRENCY_BENEFIT,
   'jev-skill.not-current': "currency — every agent skill root the kit fills holds the vendor skill at the kit's pin once a copy is placed",
   'source-size.layout': 'layout — justified piles past the layout limits become recorded exceptions with their reasons, so the commit hook can judge new ones once its layout line is armed',
   'source-size.piles': 'layout — each recorded pile gets a queue row that plans its cleanup, so the debt is ordered work in the queue, not only a record',
@@ -436,6 +443,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'attribution', mode: 'bootstrap', advisorKey: 'attribution' },
   { id: 'footprint-global', mode: 'bootstrap', advisorKey: 'footprint-global' },
   { id: 'state-block', mode: 'state-block-guard', advisorKey: 'state-block' },
+  { id: 'stage-guard', mode: 'hook', advisorKey: 'stage-guard' },
   { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
   { id: 'mcp-channel', mode: 'mcp', advisorKey: 'mcp-channel' },
   { id: 'worktrees-dir', mode: 'worktrees', advisorKey: 'worktrees-dir' },
@@ -1118,15 +1126,30 @@ const probeStateBlockHook = ({ root, deps, add, skip }) => {
     const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
     if (isStopHookWired(project.data) || isStopHookWired(local.data)) {
       probeKitHook({ key: 'state-block', write: writeStateBlockHook, rel: STATE_BLOCK_HOOK_FILE_REL, root, deps, add });
-      return;
+    } else {
+      add(
+        'state-block',
+        fillTemplate(WHATS['state-block'], {}),
+        `node ${q(toolPath('state-block-hook.mjs'))} --apply --cwd ${q(root)}`,
+      );
     }
-    add(
-      'state-block',
-      fillTemplate(WHATS['state-block'], {}),
-      `node ${q(toolPath('state-block-hook.mjs'))} --apply --cwd ${q(root)}`,
-    );
   } catch (err) {
     skip('state-block', err);
+  }
+  offerStageGuard({ root, deps, add, skip });
+};
+
+const offerStageGuard = ({ root, deps, add, skip }) => {
+  try {
+    const project = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root });
+    const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
+    if (isStageGuardWired(project.data) || isStageGuardWired(local.data)) {
+      probeKitHook({ key: 'stage-guard', write: writeStageGuard, rel: STAGE_GUARD_HOOK, root, deps, add });
+      return;
+    }
+    add('stage-guard', fillTemplate(WHATS['stage-guard'], {}), formsApply('stage-guard', root));
+  } catch (err) {
+    skip('stage-guard', err);
   }
 };
 
@@ -1360,7 +1383,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'hook-checks', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
+export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'gates-inert', 'source-size', 'gate-hook', 'stage-guard', 'mcp-channel', 'spec-adoption', 'enforcement', 'hook-checks', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had

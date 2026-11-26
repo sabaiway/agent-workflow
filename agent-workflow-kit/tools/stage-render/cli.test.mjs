@@ -59,8 +59,8 @@ const makeRepo = (t) => {
   assert.equal(judgePlan(root, readPlanDocument(root, PLAN)).accepted, true);
   return root;
 };
-const run = (root, argv) => {
-  const result = spawnSync(process.execPath, [CLI, ...argv], { cwd: root, env: cleanEnv(), encoding: 'utf8' });
+const run = (root, argv, env = cleanEnv()) => {
+  const result = spawnSync(process.execPath, [CLI, ...argv], { cwd: root, env, encoding: 'utf8' });
   assert.ifError(result.error);
   return result;
 };
@@ -83,10 +83,10 @@ const assertBeforeApproval = (result) => {
 const assertNoTemplate = (result, stage, fixedLines) => {
   for (const fragment of [table()[stage].goal, ...fixedLines]) assert.ok(!outputOf(result).includes(fragment), outputOf(result));
 };
-const invoke = async (main, root, argv) => {
+const invoke = async (main, root, argv, io = {}) => {
   const output = { stdout: '', stderr: '' };
   const status = await main(argv, {
-    cwd: root, env: cleanEnv(),
+    cwd: root, env: cleanEnv(), ...io,
     stdout: (chunk) => { output.stdout += chunk; },
     stderr: (chunk) => { output.stderr += chunk; },
   });
@@ -108,6 +108,12 @@ const projectFiles = (root) => Object.fromEntries(fs.readdirSync(root, { recursi
   .filter((path) => !path.startsWith('.git/'))
   .sort()
   .map((path) => [path, fs.readFileSync(join(root, path), 'utf8')]));
+const STAGE_RECORD = 'agent-workflow-stage.json';
+const NO_CODE_STAGE = 'pause';
+const gitDirOf = (root) => git(['rev-parse', '--absolute-git-dir'], root).trim();
+const stageRecordPath = (root) => join(gitDirOf(root), STAGE_RECORD);
+const readStageRecord = (root) => JSON.parse(fs.readFileSync(stageRecordPath(root), 'utf8'));
+const stageRecord = (stage, writes, slotFile = SLOT) => ({ schema: 1, stage, slotFile, writes });
 
 describe('spec:stage-render/S2 record-gated rendering checks the live structure', () => {
   for (const stage of GATED) {
@@ -224,12 +230,30 @@ describe('spec:stage-render/S6 CLI IO seam', () => {
 });
 
 describe('spec:stage-render/S13 writes only validated slots after the live approval check', () => {
+  const START_HEADER = 'the start prompt, shown to the user unchanged:';
+  const START_COMMAND_PREFIX = 'To start: run';
+  const ONE_SLOT_NAME = 'next-session.json';
+  const OTHER_SLOT = `${PLANS_REL}/other-session.json`;
+  const RENDER_LINE = 'node <kit>/tools/stage-render/cli.mjs ' + shellQuoteArg(SLOT);
+  const assertPrintsNoneOfTheSix = (result, label = '') => {
+    const lines = outputOf(result).split('\n');
+    assert.ok(!lines.includes(START_HEADER) && !lines.includes(RENDER_LINE), `${label}: ${outputOf(result)}`);
+    assert.ok(!lines.some((line) => line.startsWith(START_COMMAND_PREFIX)), `${label}: ${outputOf(result)}`);
+    assert.ok(!result.stdout.includes(SLOT), `${label}: ${result.stdout}`);
+  };
+  const grantAny = (root) => {
+    writeSlots(root, GATED[0]);
+    expect(run(root, [SLOT]), 0);
+  };
+  const recordBytesOf = (root) => (fs.existsSync(stageRecordPath(root)) ? fs.readFileSync(stageRecordPath(root)) : null);
+
   for (const stage of GATED) {
     it(stage, (t) => {
       const root = makeRepo(t);
       const args = writerArgs(stage);
       const before = run(root, args);
       assertBeforeApproval(before);
+      assertPrintsNoneOfTheSix(before, 'before the approval');
       assert.ok(!fs.existsSync(join(root, SLOT)));
       recordApproval(root, PLAN);
       const record = fs.readFileSync(recordPath(root));
@@ -245,12 +269,14 @@ describe('spec:stage-render/S13 writes only validated slots after the live appro
       const command = line.replace('<kit>', isSeedablePathToken(KIT) ? KIT : shellQuoteArg(KIT));
       assert.ok(after.stdout.split('\n').includes(line), after.stdout);
       assert.ok(after.stdout.split('\n').includes(command), after.stdout);
+      assert.ok(after.stdout.split('\n').includes(START_HEADER), after.stdout);
       expect(run(root, [SLOT]), 0);
       const slotBytes = fs.readFileSync(join(root, SLOT));
       breakEpic(root);
       const refused = run(root, args);
       expect(refused, 1);
       assert.ok(outputOf(refused).includes(EPIC), outputOf(refused));
+      assertPrintsNoneOfTheSix(refused, 'a refused structure');
       assert.deepEqual(fs.readFileSync(join(root, SLOT)), slotBytes);
       assert.deepEqual(fs.readFileSync(recordPath(root)), record);
     });
@@ -308,15 +334,259 @@ describe('spec:stage-render/S13 writes only validated slots after the live appro
     assert.notEqual(result.status, 0, outputOf(result));
     assert.match(outputOf(result), /plan|outside\.md/);
     assert.deepEqual(fs.readFileSync(join(root, SLOT)), original);
-    const linked = `${PLANS_REL}/linked.json`;
-    fs.symlinkSync(join(root, SLOT), join(root, linked));
-    const linkResult = run(root, writerArgs(stage).map((value) => value === SLOT ? linked : value));
+    const bodyFile = `${PLANS_REL}/slot-body.json`;
+    fs.renameSync(join(root, SLOT), join(root, bodyFile));
+    fs.symlinkSync(join(root, bodyFile), join(root, SLOT));
+    const linkResult = run(root, writerArgs(stage));
     assert.notEqual(linkResult.status, 0, outputOf(linkResult));
-    assert.ok(outputOf(linkResult).includes(linked), outputOf(linkResult));
-    const renderLink = run(root, [linked]);
+    assert.ok(outputOf(linkResult).includes(SLOT), outputOf(linkResult));
+    const renderLink = run(root, [SLOT]);
     assert.notEqual(renderLink.status, 0, outputOf(renderLink));
-    assert.ok(outputOf(renderLink).includes(linked), outputOf(renderLink));
-    assert.ok(fs.lstatSync(join(root, linked)).isSymbolicLink());
-    assert.deepEqual(fs.readFileSync(join(root, SLOT)), original);
+    assert.ok(outputOf(renderLink).includes(SLOT), outputOf(renderLink));
+    assert.ok(fs.lstatSync(join(root, SLOT)).isSymbolicLink());
+    assert.deepEqual(fs.readFileSync(join(root, bodyFile)), original);
+  });
+  it('the retired --epic, --story and --file are unknown arguments: usage at exit 2, nothing written, and the usage line names none of them', (t) => {
+    const root = makeRepo(t);
+    const filesBefore = projectFiles(root);
+    const retired = [['--epic', EPIC], ['--story', STORY], ['--file', NOTES]];
+    for (const [flag, value] of retired) {
+      for (const stage of ['pause', GATED[0]]) {
+        const result = run(root, ['--write', SLOT, '--stage', stage, ...(stage === 'pause' ? [] : ['--plan', PLAN]), flag, value]);
+        expect(result, 2);
+        const usage = result.stderr.split('\n').find((line) => line.startsWith('Usage: '));
+        assert.ok(usage, outputOf(result));
+        const synopsis = usage.slice(0, usage.indexOf(' — '));
+        assert.ok(synopsis.includes('--queue-row') && synopsis.includes('--decisions'), synopsis);
+        for (const [name] of retired) assert.ok(!synopsis.includes(name), synopsis);
+        assert.deepEqual(projectFiles(root), filesBefore, `${stage} ${flag}`);
+        assert.equal(fs.existsSync(stageRecordPath(root)), false, `${stage} ${flag}`);
+      }
+    }
+  });
+  it('in a main tree --write prints exactly the written line, the render line, the render command, the header and the start prompt, in a linked tree the first three alone', async (t) => {
+    const { composeRenderLine, composeRenderCommand, composeStartPrompt, loadStages } = await import('./index.mjs');
+    const stagesTable = loadStages(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+    const root = makeRepo(t);
+    const assertPrinted = (cwd, stage, withPrompt) => {
+      const result = run(cwd, writerArgs(stage));
+      expect(result, 0);
+      const lines = result.stdout.split('\n');
+      const slots = JSON.parse(fs.readFileSync(join(cwd, SLOT), 'utf8'));
+      const prompt = withPrompt ? composeStartPrompt({ slotFile: SLOT, slots, table: stagesTable }).split('\n') : [];
+      assert.equal(prompt.length, withPrompt ? 2 : 0, prompt.join('\n'));
+      assert.ok(lines[0].includes(SLOT), result.stdout);
+      assert.deepEqual(lines.slice(1), [composeRenderLine(SLOT), composeRenderCommand(SLOT), ...(withPrompt ? [START_HEADER, ...prompt] : []), ''], `${stage}: ${result.stdout}`);
+    };
+    assertPrinted(root, NO_CODE_STAGE, true);
+    assertPrinted(root, 'waiting-on-approval', true);
+    recordApproval(root, PLAN);
+    assertPrinted(root, GATED[0], true);
+    git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+      'commit', '--allow-empty', '--no-verify', '-q', '-m', 'fixture'], root);
+    const linkedParent = makeTree('stage-render-linked-write');
+    t.after(() => fs.rmSync(linkedParent, { recursive: true, force: true }));
+    const linked = join(linkedParent, 'tree');
+    git(['worktree', 'add', '-q', '--detach', linked], root);
+    fs.mkdirSync(join(linked, PLANS_REL), { recursive: true });
+    assertPrinted(linked, NO_CODE_STAGE, false);
+  });
+  it('composes every printed line before the write: a kit root holding a backtick refuses naming it, writes no slot file, prints none of the six lines and leaves the record', (t) => {
+    const root = makeRepo(t);
+    const scratch = makeTree('stage-render-kit-copy');
+    t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+    const copyRoot = join(scratch, 'kit`tick');
+    fs.cpSync(KIT, copyRoot, { recursive: true });
+    recordApproval(root, PLAN);
+    grantAny(root);
+    fs.rmSync(join(root, SLOT));
+    const recordBefore = recordBytesOf(root);
+    const result = spawnSync(process.execPath, [join(copyRoot, 'tools/stage-render/cli.mjs'), ...writerArgs(NO_CODE_STAGE)], { cwd: root, env: cleanEnv(), encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0, outputOf(result));
+    assert.ok(outputOf(result).includes(copyRoot), outputOf(result));
+    assert.equal(fs.existsSync(join(root, SLOT)), false);
+    assertPrintsNoneOfTheSix(result, 'a kit root holding a backtick');
+    assert.deepEqual(recordBytesOf(root), recordBefore);
+    assert.deepEqual(readStageRecord(root), stageRecord(GATED[0], 'any'));
+  });
+  it('beside a valid docs/plans/next-session.json a render of another name exits 1 and records authoring naming the one slot file, and a --write to another name exits 1 and leaves the record', (t) => {
+    const root = makeRepo(t);
+    recordApproval(root, PLAN);
+    grantAny(root);
+    fs.copyFileSync(join(root, SLOT), join(root, OTHER_SLOT));
+    const rendered = run(root, [OTHER_SLOT]);
+    expect(rendered, 1);
+    assert.ok(outputOf(rendered).includes(ONE_SLOT_NAME), outputOf(rendered));
+    assert.deepEqual(readStageRecord(root), stageRecord(null, 'authoring'));
+    fs.rmSync(join(root, OTHER_SLOT));
+    grantAny(root);
+    const recordBefore = recordBytesOf(root);
+    const written = run(root, ['--write', OTHER_SLOT, '--stage', NO_CODE_STAGE]);
+    expect(written, 1);
+    assert.equal(fs.existsSync(join(root, OTHER_SLOT)), false);
+    assert.deepEqual(recordBytesOf(root), recordBefore);
+    assert.deepEqual(readStageRecord(root), stageRecord(GATED[0], 'any'));
+  });
+  it('a non-gated --write whose record write fails exits 2 with no slot file, and one whose slot write fails after the record keeps the earlier slot file and the authoring record and prints no start prompt', (t) => {
+    const root = makeRepo(t);
+    fs.mkdirSync(stageRecordPath(root));
+    const recordFailed = run(root, writerArgs(NO_CODE_STAGE));
+    expect(recordFailed, 2);
+    assert.ok(outputOf(recordFailed).includes(STAGE_RECORD), outputOf(recordFailed));
+    assert.equal(fs.existsSync(join(root, SLOT)), false);
+    fs.rmdirSync(stageRecordPath(root));
+    recordApproval(root, PLAN);
+    grantAny(root);
+    const earlier = fs.readFileSync(join(root, SLOT));
+    fs.chmodSync(join(root, PLANS_REL), 0o555);
+    const slotFailed = (() => {
+      try {
+        return run(root, writerArgs(NO_CODE_STAGE));
+      } finally {
+        fs.chmodSync(join(root, PLANS_REL), 0o755);
+      }
+    })();
+    expect(slotFailed, 2);
+    assert.deepEqual(fs.readFileSync(join(root, SLOT)), earlier);
+    assert.deepEqual(readStageRecord(root), stageRecord(NO_CODE_STAGE, 'authoring'));
+    assertPrintsNoneOfTheSix(slotFailed, 'a failed slot write');
+  });
+});
+
+describe('spec:stage-render/S14 the render records its stage in the git directory', () => {
+  const KEPT = 'kept\n';
+
+  it('every render first records authoring with a null stage, so a refusal of the table, the slot file, the approval match or the engine leaves it over an earlier any', async (t) => {
+    const { main } = await import('./cli.mjs');
+    const { FIXED_LINES } = await import('./index.mjs');
+    const root = makeRepo(t);
+    recordApproval(root, PLAN);
+    const grantAny = () => {
+      writeSlots(root, GATED[0]);
+      write(root, EPIC, EPIC_BODY);
+      expect(run(root, [SLOT]), 0);
+      assert.deepEqual(readStageRecord(root), stageRecord(GATED[0], 'any'));
+    };
+    const refusals = [
+      ['the table', 2, () => invoke(main, root, [SLOT], { stagesPath: join(root, 'absent-stages.json') })],
+      ['the slot file', 1, () => {
+        writeJson(root, SLOT, { schema: 1, stage: 'unknown-stage', date: DATE });
+        return run(root, [SLOT]);
+      }],
+      ['the approval match', 1, () => {
+        breakEpic(root);
+        return run(root, [SLOT]);
+      }],
+      ['the engine', 2, () => run(root, [SLOT], { ...cleanEnv(), [ENGINE_ENV]: join(root, 'absent-engine') })],
+    ];
+    for (const [input, status, refuse] of refusals) {
+      grantAny();
+      const result = await refuse();
+      assert.equal(result.status, status, `${input}: ${outputOf(result)}`);
+      assertNoTemplate(result, GATED[0], FIXED_LINES);
+      assert.deepEqual(readStageRecord(root), stageRecord(null, 'authoring'), input);
+    }
+  });
+  it('a composed record-gated rendering whose match holds records any, every other composed rendering authoring with its stage, in exactly the four keys', async (t) => {
+    const root = makeRepo(t);
+    const renderAndRead = (stage) => {
+      writeSlots(root, stage);
+      expect(run(root, [SLOT]), 0);
+      return readStageRecord(root);
+    };
+    const others = Object.keys(table()).filter((stage) => !GATED.includes(stage));
+    for (const stage of others) assert.deepEqual(renderAndRead(stage), stageRecord(stage, 'authoring'), stage);
+    const { composeStageRecord } = await import('./index.mjs');
+    assert.equal(fs.readFileSync(stageRecordPath(root), 'utf8'), composeStageRecord({ stage: others.at(-1), slotFile: SLOT, writes: 'authoring' }));
+    recordApproval(root, PLAN);
+    for (const stage of GATED) assert.deepEqual(renderAndRead(stage), stageRecord(stage, 'any'), stage);
+    assert.equal(fs.readFileSync(stageRecordPath(root), 'utf8'), composeStageRecord({ stage: GATED.at(-1), slotFile: SLOT, writes: 'any' }));
+  });
+  it('--write of a stage outside RECORD_GATED_STAGES records authoring with its stage, while --write of a record-gated stage, a refused --write and --dispatch leave the record', (t) => {
+    const root = makeRepo(t);
+    recordApproval(root, PLAN);
+    writeSlots(root, GATED[0]);
+    expect(run(root, [SLOT]), 0);
+    const granted = fs.readFileSync(stageRecordPath(root));
+    for (const argv of [writerArgs(GATED[1]), ['--dispatch', PLAN]]) {
+      expect(run(root, argv), 0);
+      assert.deepEqual(fs.readFileSync(stageRecordPath(root)), granted, argv.join(' '));
+    }
+    expect(run(root, ['--write', SLOT, '--stage', NO_CODE_STAGE, '--plan', PLAN]), 1);
+    assert.deepEqual(fs.readFileSync(stageRecordPath(root)), granted, 'a refused --write');
+    expect(run(root, ['--write', SLOT, '--stage', NO_CODE_STAGE]), 0);
+    assert.deepEqual(readStageRecord(root), stageRecord(NO_CODE_STAGE, 'authoring'));
+  });
+  it('the record lands in the git directory --absolute-git-dir answers whatever AW_REVIEW_RECEIPTS or an ambient GIT_DIR names, one per work tree, and with no git directory nothing is recorded and the stage renders', (t) => {
+    const root = makeRepo(t);
+    const receipts = makeTree('stage-record-receipts');
+    const other = makeFixtureRepo((argv) => git(argv), makeTree('stage-record-other'));
+    const linkedParent = makeTree('stage-record-linked');
+    for (const dir of [receipts, other, linkedParent]) t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    writeSlots(root, NO_CODE_STAGE);
+    const seams = [
+      ['AW_REVIEW_RECEIPTS', { AW_REVIEW_RECEIPTS: join(receipts, 'agent-workflow-review-receipts.jsonl') }],
+      ['GIT_DIR', { GIT_DIR: join(other, '.git'), GIT_WORK_TREE: other }],
+    ];
+    for (const [seam, seamEnv] of seams) {
+      fs.rmSync(stageRecordPath(root), { force: true });
+      expect(run(root, [SLOT], { ...cleanEnv(), ...seamEnv }), 0);
+      assert.deepEqual(readStageRecord(root), stageRecord(NO_CODE_STAGE, 'authoring'), seam);
+      assert.deepEqual(fs.readdirSync(receipts), [], seam);
+      assert.equal(fs.existsSync(join(gitDirOf(other), STAGE_RECORD)), false, seam);
+    }
+    git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+      'commit', '--allow-empty', '--no-verify', '-q', '-m', 'fixture'], root);
+    const linked = join(linkedParent, 'tree');
+    git(['worktree', 'add', '-q', '--detach', linked], root);
+    writeJson(linked, SLOT, { schema: 1, stage: NO_CODE_STAGE, date: DATE });
+    fs.rmSync(stageRecordPath(root), { force: true });
+    expect(run(linked, [SLOT]), 0);
+    assert.notEqual(gitDirOf(linked), gitDirOf(root));
+    assert.deepEqual(readStageRecord(linked), stageRecord(NO_CODE_STAGE, 'authoring'));
+    assert.equal(fs.existsSync(stageRecordPath(root)), false);
+    const bare = makeRoot(t);
+    const probe = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: bare, env: cleanEnv(), encoding: 'utf8' });
+    assert.notEqual(probe.status, 0, 'the fixture reaches no git directory');
+    writeSlots(bare, NO_CODE_STAGE);
+    const rendered = run(bare, [SLOT]);
+    expect(rendered, 0);
+    assert.ok(rendered.stdout.includes(table()[NO_CODE_STAGE].goal), rendered.stdout);
+    assert.deepEqual(fs.readdirSync(bare, { recursive: true }).filter((path) => path.endsWith(STAGE_RECORD)), []);
+  });
+  it('a failed record write exits 2 naming the record and prints no template, and a link at the record path is never written through', async (t) => {
+    const { FIXED_LINES } = await import('./index.mjs');
+    const root = makeRepo(t);
+    const outside = makeTree('stage-record-target');
+    t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+    writeSlots(root, NO_CODE_STAGE);
+    const gitDir = gitDirOf(root);
+    const recordFile = join(gitDir, STAGE_RECORD);
+    const target = join(outside, 'target.json');
+    fs.writeFileSync(target, KEPT);
+    const assertFailed = (result, state) => {
+      assert.equal(result.status, 2, `${state}: ${outputOf(result)}`);
+      assert.ok(outputOf(result).includes(STAGE_RECORD), `${state}: ${outputOf(result)}`);
+      assertNoTemplate(result, NO_CODE_STAGE, FIXED_LINES);
+    };
+    fs.mkdirSync(recordFile);
+    assertFailed(run(root, [SLOT]), 'a directory at the record path');
+    fs.rmdirSync(recordFile);
+    fs.symlinkSync(target, recordFile);
+    assertFailed(run(root, [SLOT]), 'a link at the record path');
+    assert.ok(fs.lstatSync(recordFile).isSymbolicLink());
+    assert.equal(fs.readFileSync(target, 'utf8'), KEPT);
+    fs.rmSync(recordFile);
+    fs.chmodSync(gitDir, 0o555);
+    const unwritable = (() => {
+      try {
+        return run(root, [SLOT]);
+      } finally {
+        fs.chmodSync(gitDir, 0o755);
+      }
+    })();
+    assertFailed(unwritable, 'an unwritable git directory');
+    assert.equal(fs.existsSync(recordFile), false);
   });
 });

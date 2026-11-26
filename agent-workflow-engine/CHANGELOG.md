@@ -4,6 +4,39 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 7.0.0 — a session starts by rendering its stage, an approval writes its record, and a plan carries no line counts (AD-241)
+
+The canon now tells each session how it starts and when code may begin; kit 24.0.0 carries the tools it names.
+MAJOR: the start of a session, the approval step and the plan's ledger form change for every project, so a plan in
+flight under 6.0.3 asks its yes again.
+
+- `references/procedures.md`: a session starts by running the handover's `## Next session` line,
+  `node <kit>/tools/stage-render/cli.mjs <slot file>`, or a start prompt's command; the prompt's first line is a label,
+  and when the render succeeds no recovery runs. Recovery writes the one slot file from the plan and its approval
+  record, never from free text. Plan-authoring's draft writes no code and no test before the approval and judges no
+  size; its approval shows the plan's essence in the dialogue language the user set in the kit, saves it in
+  `docs/plans/<plan stem>-essence.txt` and, on the chat yes, runs
+  `node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>`; its Definition of Done is the plan,
+  its approval record and the next-session line the writer prints. Plan-execution runs
+  `node <kit>/tools/plan-structure/cli.mjs <plan>` before a dispatch and before each diff-review or re-check brief,
+  whose brief lists every amendment entry, and every dispatch brief carries the `aw-plan-approval` block
+  `stage-render/cli.mjs --dispatch <plan>` prints. The epic activity gains its design-consult part, and a split runs
+  in two parts under one yes.
+- `references/planning.md`: a ledger row holds five fields and the ledger no total line; size is judged at the
+  diff, never in a plan; the cap is 100 lines and 45 rows, and a plan past a count that still belongs in one plan
+  states why on one `One plan: ` line. A revision of a live contract waits in the plan's revision home
+  `docs/plans/<plan stem>.specs/`. A file missed after the approval is an entry under `amendments:` that takes no new
+  yes.
+- `references/specs.md`: the spec gate of a spec-and-plan session is `spec-check-cli.mjs --plan <plan>`, then
+  `--all`; a draft or a revision may name a Module file its own plan creates (pending ground); spec-check reads the
+  plans in flight only where a rule needs them.
+- `references/orchestration.md` and `references/orchestration-slot.md`: an authoring slot rides the no-shell author
+  vehicle, every slot is judged by its role, and without the author vehicle the slot resolves to solo with its
+  reason; the executor vehicle no longer authors.
+- `references/rules/lens.md` (the lens theme): one definition per setting and location, and every review treats a
+  hard-coded or duplicated one as a finding; a fold during authoring names its scenario and its test is written in
+  the tests session; execution starts only after the approval record and the next-session line exist.
+
 ## 6.0.3 — the package needs Node.js 22.21 or newer (AD-228)
 
 `package.json`'s `engines.node` is `>=22.21`, the floor of the whole family since kit 23.3.0, whose judge bridge

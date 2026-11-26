@@ -5,10 +5,9 @@
 // three cases of references/modes/state-block-guard.md: no `hooks` key, a `hooks` key without
 // `Stop`, and a `hooks.Stop` array, which gains one element.
 //
-// The symlink, target and settings-shape checks and the hook-file write (writeHookFile) are IMPORTED
-// from gate-hook.mjs, with the stamp reader and the settings formatter; the unsafe-mode and stamp
-// refusals, the place-then-wire order and the no-follow re-read of the placed file before the
-// settings write follow gate-hook's, with its error codes. What is the Stop hook's own:
+// The place-then-wire flow runs on the kit's hook writer (hook-writer/index.mjs), which imports the
+// hardened checks, the hook-file write and the unsafe-mode and stamp refusals from gate-hook.mjs,
+// with its error codes. What is the Stop hook's own:
 //   • preview by default; `--apply` writes;
 //   • the runtime is created when absent, kept when byte-equal, replaced when it differs (the
 //     preview says so; the danger check prints the replaced bytes' digest);
@@ -21,38 +20,12 @@
 // Exit codes: 0 done / preview; 1 precondition STOP; 2 usage. Dependency-free beyond the kit's
 // own internal exports, Node >= 22. No side effects on import.
 
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STOP_HOOK } from '../references/scripts/shared/index.mjs';
-import {
-  CLAUDE_DIR,
-  EXPECTED_WORKFLOW_VERSION,
-  SAFE_DEFAULT_MODES,
-  SETTINGS_FILE,
-  SETTINGS_LOCAL_FILE,
-  UNSAFE_BYPASS_MODE,
-  WORKFLOW_STAMP,
-  readSettingsFile,
-  resolveEffectiveMode,
-} from './velocity-profile.mjs';
-import {
-  GATE_HOOK_DIVERGED,
-  GATE_HOOK_STAMP,
-  GATE_HOOK_UNSAFE_MODE,
-  HOOKS_DIR,
-  assertDirSafe,
-  assertHooksShape,
-  assertSettingsWritable,
-  formatJson,
-  fsDeps,
-  makeGateHookError,
-  planTarget,
-  readBundledHook,
-  readStamp,
-  writeHookFile,
-} from './gate-hook.mjs';
+import { SETTINGS_FILE, SETTINGS_LOCAL_FILE } from './velocity-profile.mjs';
+import { formatKitHookResult, mergeHookEntryInto, writeKitHook } from './hook-writer/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { fileLine } from './distribution-files/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -69,17 +42,13 @@ export const STOP_EVENT = 'Stop';
 const EXIT_OK = 0;
 const EXIT_PRECONDITION = 1;
 const EXIT_USAGE = 2;
-const UTF8 = 'utf8';
-const LF = '\n';
-
-const PLACEMENT_CREATE = 'create';
-const PLACEMENT_KEEP = 'keep';
-const PLACEMENT_REPLACE = 'replace';
-const PLACEMENT_OF = Object.freeze({ place: PLACEMENT_CREATE, 'already-current': PLACEMENT_KEEP, diverged: PLACEMENT_REPLACE });
 
 const MERGE_NO_HOOKS = 'no-hooks';
+const MERGE_NO_EVENT = 'no-event';
 const MERGE_NO_STOP = 'no-stop';
 const MERGE_APPEND = 'append';
+const STOP_CASE_OF = Object.freeze({ [MERGE_NO_EVENT]: MERGE_NO_STOP });
+const KIT_CASE_OF = Object.freeze({ [MERGE_NO_STOP]: MERGE_NO_EVENT });
 
 const USAGE = `usage: state-block-hook [--apply] [--cwd <dir>] [--help]
 
@@ -92,7 +61,6 @@ The entry is merged only while no ${STOP_EVENT} entry of either settings file ru
 Never writes ${SETTINGS_LOCAL_FILE}; never commits.`;
 
 const usageError = (message) => Object.assign(new Error(message), { exitCode: EXIT_USAGE });
-const isJsonObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // ── the Stop entry ────────────────────────────────────────────────────────────────────
 
@@ -113,137 +81,43 @@ export const isStopHookWired = (data) => {
     : runsStateBlockGuard(entry)));
 };
 
-const mergeCaseOf = (data) => {
-  if (!isJsonObject(data) || data.hooks === undefined) return MERGE_NO_HOOKS;
-  return data.hooks[STOP_EVENT] === undefined ? MERGE_NO_STOP : MERGE_APPEND;
-};
-
 // Append our ONE entry; every foreign hook, matcher and key is carried over untouched. Only called
 // when the entry is absent (idempotence lives in the caller's plan, not in dedup-on-write).
-export const mergeStopEntry = (base) => {
-  const root = isJsonObject(base) ? base : {};
-  const hooks = isJsonObject(root.hooks) ? root.hooks : {};
-  const entries = Array.isArray(hooks[STOP_EVENT]) ? hooks[STOP_EVENT] : [];
-  return { ...root, hooks: { ...hooks, [STOP_EVENT]: [...entries, buildStopHookEntry()] } };
-};
+export const mergeStopEntry = (base) => mergeHookEntryInto(base, STOP_EVENT, buildStopHookEntry());
 
-// ── the writer ────────────────────────────────────────────────────────────────────────
-
-const preflight = (projectDir, deps) => {
-  const fs = fsDeps(deps);
-  const bundleContent = readBundledHook({ ...deps, bundlePath: deps.bundlePath ?? BUNDLED_STATE_BLOCK_HOOK_PATH });
-  const stamp = readStamp(join(projectDir, WORKFLOW_STAMP), fs);
-  assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
-  assertDirSafe(join(projectDir, HOOKS_DIR), HOOKS_DIR, fs);
-  const target = planTarget(join(projectDir, STATE_BLOCK_HOOK_FILE_REL), STATE_BLOCK_HOOK_FILE_REL, bundleContent, fs);
-  assertSettingsWritable(join(projectDir, SETTINGS_FILE), fs);
-  const projectSettings = readSettingsFile(join(projectDir, SETTINGS_FILE), { ...deps, cwd: projectDir });
-  const localSettings = readSettingsFile(join(projectDir, SETTINGS_LOCAL_FILE), { ...deps, cwd: projectDir });
-  const { bypassPermissionsPresent, unsafeModePresent } = resolveEffectiveMode(projectSettings.data, localSettings.data);
-  if (bypassPermissionsPresent) {
-    throw makeGateHookError(GATE_HOOK_UNSAFE_MODE, `${UNSAFE_BYPASS_MODE} appears in Claude settings - refusing to wire a hook beside it`);
-  }
-  if (unsafeModePresent) {
-    throw makeGateHookError(
-      GATE_HOOK_UNSAFE_MODE,
-      `an unsafe or unknown permissions.defaultMode is present in Claude settings - accepted modes: ${SAFE_DEFAULT_MODES.join(', ')}`,
-    );
-  }
-  assertHooksShape(projectSettings.data, SETTINGS_FILE, STOP_EVENT);
-  return {
-    projectDir,
-    bundleContent,
-    stamp,
-    stampOk: stamp === EXPECTED_WORKFLOW_VERSION,
-    placement: PLACEMENT_OF[target.action],
-    projectSettings,
-    localSettings,
-    wiredInProject: isStopHookWired(projectSettings.data),
-    wiredInLocal: isStopHookWired(localSettings.data),
-    mergeCase: mergeCaseOf(projectSettings.data),
-  };
-};
-
-export const writeStateBlockHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
-  const fs = fsDeps(deps);
-  const plan = preflight(resolve(cwd ?? deps.cwd ?? process.cwd()), deps);
-  const placePlanned = plan.placement !== PLACEMENT_KEEP;
-  const mergePlanned = !plan.wiredInProject && !plan.wiredInLocal;
-  const base = { placePlanned, mergePlanned, ...plan };
-  if (dryRun) return { wrote: false, dryRun: true, ...base };
-
-  if (!plan.stampOk) {
-    throw makeGateHookError(
-      GATE_HOOK_STAMP,
-      `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${plan.stamp ?? 'none'}) — run init/upgrade first`,
-    );
-  }
-  // Place FIRST, then wire — a wired-but-missing hook would error on every turn end.
-  const hookAbs = join(plan.projectDir, STATE_BLOCK_HOOK_FILE_REL);
-  if (plan.placement === PLACEMENT_CREATE) fs.mkdir(join(plan.projectDir, HOOKS_DIR), { recursive: true });
-  if (placePlanned) writeHookFile(hookAbs, STATE_BLOCK_HOOK_FILE_REL, plan.bundleContent, plan.placement === PLACEMENT_CREATE, fs);
-  if (mergePlanned) {
-    // Re-judge the placed file no-follow immediately BEFORE wiring: a runtime swapped, or turned
-    // into a link, between the placement and now must never be wired — zero settings mutation.
-    const placed = planTarget(hookAbs, STATE_BLOCK_HOOK_FILE_REL, plan.bundleContent, fs);
-    if (placed.action !== 'already-current') {
-      throw makeGateHookError(
-        GATE_HOOK_DIVERGED,
-        `${STATE_BLOCK_HOOK_FILE_REL} changed after placement — refusing to wire an unknown script as a ${STOP_EVENT} hook (no settings change made); re-run`,
-      );
-    }
-    fs.writeFile(
-      join(plan.projectDir, SETTINGS_FILE),
-      formatJson(mergeStopEntry(plan.projectSettings.data ?? {}), plan.projectSettings.eol ?? LF),
-      UTF8,
-    );
-  }
-  return { wrote: placePlanned || mergePlanned, dryRun: false, ...base };
-};
-
-// ── report ────────────────────────────────────────────────────────────────────────────
-
-const STATE_BLOCK_CURRENT_LINE = 'nothing to change: the state-block hook is placed, current and wired';
+// ── the writer and its report ─────────────────────────────────────────────────────────
 
 const TRUST_POSTURE_LINE =
   'trust posture: the guard reads the closing assistant message of each turn and writes one warning line; it runs a Node process on every turn end, reads nothing else, makes no network call and approves nothing.';
 
-const PLACEMENT_LINES = Object.freeze({ [PLACEMENT_CREATE]: ['would place', 'placed'], [PLACEMENT_KEEP]: ['already current', 'already current'] });
-const placementLine = ({ placement, dryRun }) => (placement === PLACEMENT_REPLACE
-  ? fileLine({ rel: STATE_BLOCK_HOOK_FILE_REL, state: 'hook' }, dryRun ? undefined : 'written', dryRun)
-  : `${STATE_BLOCK_HOOK_FILE_REL}: ${PLACEMENT_LINES[placement][dryRun ? 0 : 1]}`);
-
-const MERGE_LINES = Object.freeze({
-  [MERGE_NO_HOOKS]: 'the hooks key with the Stop entry',
-  [MERGE_NO_STOP]: 'the Stop key beside the existing hooks',
-  [MERGE_APPEND]: 'one element to the existing hooks.Stop array',
+const STATE_BLOCK_HOOK = Object.freeze({
+  fileRel: STATE_BLOCK_HOOK_FILE_REL,
+  bundlePath: BUNDLED_STATE_BLOCK_HOOK_PATH,
+  event: STOP_EVENT,
+  entry: buildStopHookEntry(),
+  isWired: isStopHookWired,
+  refusesUnsafeModes: true,
+  lines: Object.freeze({
+    title: 'state-block hook',
+    commandNote: `command: ${STATE_BLOCK_HOOK_COMMAND} (no --require-block; references/modes/state-block-guard.md says when to add it)`,
+    reload: 'the Stop hook runs from the next turn end',
+    merge: Object.freeze({
+      [MERGE_NO_HOOKS]: 'the hooks key with the Stop entry',
+      [MERGE_NO_EVENT]: 'the Stop key beside the existing hooks',
+      [MERGE_APPEND]: 'one element to the existing hooks.Stop array',
+    }),
+    bypassReason: 'refusing to wire a hook beside it',
+    trustPosture: TRUST_POSTURE_LINE,
+    nothingToChange: 'nothing to change: the state-block hook is placed, current and wired',
+  }),
 });
 
-const formatSettingsLine = (result) => {
-  if (result.wiredInProject) return `  - ${SETTINGS_FILE}: already wired`;
-  if (result.wiredInLocal) return `  - ${SETTINGS_FILE}: already wired via ${SETTINGS_LOCAL_FILE} — not duplicated`;
-  return `  - ${SETTINGS_FILE}: ${result.dryRun ? 'would add' : 'added'} ${MERGE_LINES[result.mergeCase]}`;
-};
+const withMergeCase = (result, caseOf) => ({ ...result, mergeCase: caseOf[result.mergeCase] ?? result.mergeCase });
 
-export const formatResult = (result) => {
-  if (!result.placePlanned && !result.mergePlanned) return STATE_BLOCK_CURRENT_LINE;
-  const lines = [
-    result.dryRun
-      ? 'agent-workflow state-block hook — DRY RUN (no changes; re-run with --apply)'
-      : 'agent-workflow state-block hook — APPLY',
-    `  - ${placementLine(result)}`,
-    formatSettingsLine(result),
-    `  command: ${STATE_BLOCK_HOOK_COMMAND} (no --require-block; references/modes/state-block-guard.md says when to add it)`,
-    TRUST_POSTURE_LINE,
-  ];
-  if (!result.stampOk) {
-    lines.push(`note: no current deployment stamp found (${result.stamp ?? 'none'}) — --apply will refuse until init/upgrade runs.`);
-  }
-  if (!result.dryRun && result.mergePlanned) {
-    lines.push('settings hot-reload: the Stop hook runs from the next turn end — no session restart needed.');
-  }
-  return lines.join(LF);
-};
+export const writeStateBlockHook = ({ cwd, dryRun = true } = {}, deps = {}) =>
+  withMergeCase(writeKitHook(STATE_BLOCK_HOOK, { cwd: cwd ?? deps.cwd ?? process.cwd(), dryRun }, deps), STOP_CASE_OF);
+
+export const formatResult = (result) => formatKitHookResult(STATE_BLOCK_HOOK, withMergeCase(result, KIT_CASE_OF));
 
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 

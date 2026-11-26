@@ -3,12 +3,21 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
-- **SLOT-KINDS-NO-STAGE-NAMES** — invariant: every slot kind the stage renderer accepts is named by a stage of its
-  table. Origin: `agent-workflow-kit/tools/stage-render/index.mjs:27` (`SLOT_KINDS`); since the slot-gap fold of story S3
-  of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN (`stages.json:38` names only `plan`), `epic`, `story` and `file` are
-  named by no stage, and the writer's `--epic`, `--story` and `--file` refuse on every stage (`cli.mjs` `composeValues`).
-  Judged together at story 5's spec session, which shares `stage-render/` (the Fable seat, slot-gap consult). Residual,
-  NOT live: the usage line advertises three flags no stage takes; each refuses by name.
+- **STAGE-WRITER-START-PROMPT-WITH-NO-GIT-DIRECTORY** — invariant: the stage writer and its contract name the same
+  trees for the start prompt. Origin: `agent-workflow-kit/tools/stage-render/cli.mjs:93` (`isMainTree(null)` holds, so
+  `--write` where git answers no git directory prints the start prompt) against stage-render's next-session part ("in
+  a main tree (its git directory equal to its common directory) alone"). Resolved at the next stage-render revision:
+  the contract reads "outside a linked work tree" (the lens) or the code requires a git directory (codex, agy); story S5
+  diff review of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN. Residual, NOT live: a project with no git directory has
+  no linked work tree, and the prompt it prints renders.
+
+- **UNINSTALL-NAMES-NO-KIT-HOOK-BUT-THE-GATE-HOOK** — invariant: every kit hook that can be wired is named in
+  uninstall's settings edit, each judged by its own writer's wired check. Origin: `agent-workflow-kit/tools/uninstall.mjs`
+  `detectSettingsSeams` (`:767`), which knows the gate hook and, since story S5's diff review, the stage write guard;
+  the state-block `Stop` hook (`.claude/hooks/state-block-guard.mjs`) is not named, nor is any kit hook file removed
+  but the gate hook's. Narrow fix shipped: a wired stage guard entry in either settings file is reported with its hand
+  edit (`uninstall.test.mjs`, "stage guard: a wired entry in either settings file"). Residual, NOT live: after an
+  uninstall the state-block hook keeps warning on closing blocks until its entry is removed by hand; it never blocks.
 
 - **WORKTREES-SUITES-EACH-BUILD-THEIR-OWN-REPO** — invariant: the work-tree suites build their fixture repository and
   run the CLI through one test-support module. Origin: a `makeRepo` of its own in 21 `agent-workflow-kit/tools/worktrees-*.test.mjs`
@@ -27,29 +36,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   reads the shared file and refuses a plan with a contract row (fail-closed); with the variable set the record can lie
   outside the git directory. The generalization needs a record-location parameter through `readApproval`,
   `appendApproval` and the append lane (the Fable seat, S3 diff review design consult).
-
-- **READING-ENTRY-LIVES-IN-ANOTHER-MODULES-CLI** — a recorded, bounded exception to the project rule "The index is the
-  one door" (`docs/ai/rules/effective/project-layout.md`), approved by the maintainer with story S3's yes: exactly three
-  import lines reach past a module's door, `agent-workflow-kit/tools/stage-render/cli.mjs:10` (`readApproval`,
-  `getLocalDate` and the outcome lines of `plan-approval/cli.mjs`) and `agent-workflow-kit/tools/worktrees.mjs:47`,
-  `:49` (plan-approval's `readApproval`, `appendApproval` and outcome lines; stage-render's `main`). The cause: both
-  doors stay write-free, since the session close check imports the stage-render door (`session-close-check.mjs:175`)
-  and its import closure is pinned against the write modules (`session-close-check.test.mjs:382-399`). Ends at story 5
-  of that epic, whose spec session settles the layout, since that story adds the rendered-stage write to stage-render
-  (the council and Fable, S3 diff review). No new import past a door joins these three.
-
-- **CODEX-EXEC-HELP-OMITS-THE-APPROVAL-STOP** — invariant: the bridge's public receipt contract lists every pre-spend
-  refusal of a nonced run. Origin: `codex-cli-bridge/bin/codex-exec.sh:162-175` ("Receipt:") and
-  `codex-cli-bridge/capability.json:24` omit the `aw-plan-approval` stop enforced at `codex-exec.sh:1164-1167`; not
-  false (`:172-174` speaks of the dispatch contract file). Folded with the codex bridge's version bump at the joint
-  release (story 5). Residual, NOT live: a caller building a nonced prompt from the help text alone meets the refusal.
-
-- **DISPATCH-BLOCK-OF-ANOTHER-PLAN-PASSES-CODEX-EXEC** — invariant: a declared residual names every walk-around of the
-  dispatch part. Origin: an `aw-plan-approval` block printed for approved plan P, pasted into a prompt for a row of
-  unapproved plan Q, passes `codex-exec` (it checks the block's own plan); declared for the executor
-  (`docs/ai/specs/kit/plan-approval.md` Out of scope), not for codex-exec; `docs/ai/specs/kit/stage-render/index.md`
-  "a reused older brief does not pass" holds within one plan (the lens, S3 diff review). Declared with story 4 or 5's
-  yes. Residual, NOT live: the record stops a mistake, not a deliberate breach.
 
 - **ROLLBACK-OWNERSHIP-IS-PROVEN-BY-PATH-AND-KIND** — invariant: the enforcement rollback removes only a file this apply
   published, never one another writer put at its path. Origin: `agent-workflow-kit/tools/git-hooks.mjs:243` (`intact(rel)
@@ -1107,11 +1093,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `agent-workflow-kit/test/recommendations-language-contract.test.mjs:126`) and `state-block` is not in it; story S6
   of BRIDGES-WORK-UNDER-THE-SANDBOX gives the item a chat-yes writer. Narrow fix: a one-line `state-block` posture note
   in `references/modes/recommendations.md` and its `RISK_NOTED_KEYS` entry. Raised by the S6 re-read (lens, m5).
-- **STATE-BLOCK-HOOK-RESTATES-TWO-GATE-HOOK-REFUSALS** — invariant: one writer discipline, written once. Origin:
-  `agent-workflow-kit/tools/state-block-hook.mjs:141-149` restates gate-hook's unsafe-mode refusal (`gate-hook.mjs:291-299`)
-  and `:173-178` its stamp refusal (`gate-hook.mjs:332-337`), with gate-hook's error codes. Narrow fix: gate-hook exports
-  the two refusals as helpers both writers call, and the S28 import cell names them. Raised by the S6 release copy pass
-  (lens, F2).
 - **SETTINGS-WRITE-FOLLOWS-A-LATE-LINK** — invariant: a writer's file write never follows a link planted after its
   preflight. Origin: the in-place `.claude/settings.json` write (`agent-workflow-kit/tools/gate-hook.mjs:359`,
   `agent-workflow-kit/tools/state-block-hook.mjs:193`) opens with a plain flag after an lstat-only preflight

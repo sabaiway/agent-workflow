@@ -44,9 +44,8 @@ import { applySlot } from './write-lanes.mjs';
 import { dirCovers } from './declared-paths.mjs';
 import { RECEIPTS_BASENAME } from './core-evidence-receipts.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
-import { OUTCOME_LINES as APPROVAL_LINES, appendApproval, readApproval } from './plan-approval/cli.mjs';
-import { RECORD_GATED_STAGES, STAGES_REL, composeRenderCommand, loadStages, validateSlots } from './stage-render/index.mjs';
-import { main as runStageWriter } from './stage-render/cli.mjs';
+import { OUTCOME_LINES as APPROVAL_LINES, appendApproval, getLocalDate, readApproval } from './plan-approval/index.mjs';
+import { RECORD_GATED_STAGES, STAGES_REL, composeRenderCommand, composeSlotText, loadStages, validateSlots } from './stage-render/index.mjs';
 
 // The record format and the satellite locator now live in leaves the dispatch side reads too — but
 // every name they took away is re-exported here, so no import site and no asserted error `code`
@@ -1576,6 +1575,13 @@ const loadStageTable = (stagesPath = STAGES_ABS) => {
 const REWRITE_SLOT = `re-run --resume with --stage <${RECORD_GATED_STAGES.join('|')}> to rewrite it, or remove it`;
 const REMOVE_SLOT = 'remove it, then finish with --resume';
 const slotRefusal = (detail, remedy) => stop(`provision refuses: the slot file ${SLOT_FILE_REL} in the worktree ${detail} — ${remedy}`);
+const refusingSlot = (detail, remedy, compose) => {
+  try {
+    return compose();
+  } catch (err) {
+    throw slotRefusal(`${detail} (${errorText(err)})`, remedy);
+  }
+};
 
 // Decided before the first provision write: a non-regular node refuses, and only a --resume without
 // --stage keeps a regular slot file, which keepSlotFile judges once the plan is seeded.
@@ -1590,13 +1596,7 @@ const planSlotFile = ({ wtRoot, flags, fs }) => {
 
 const keepSlotFile = ({ wtRoot, seedName, stagesPath }) => {
   const table = loadStageTable(stagesPath);
-  const slots = (() => {
-    try {
-      return validateSlots({ root: wtRoot, slotFile: SLOT_FILE_REL, table });
-    } catch (err) {
-      throw slotRefusal(`does not validate (${errorText(err)})`, REWRITE_SLOT);
-    }
-  })();
+  const slots = refusingSlot('does not validate', REWRITE_SLOT, () => validateSlots({ root: wtRoot, slotFile: SLOT_FILE_REL, table }));
   if (slots.plan !== `${PLANS_REL}/${seedName}`) {
     throw slotRefusal(`names the plan ${displayValue(JSON.stringify(slots.plan ?? null))}, not ${PLANS_REL}/${displayValue(seedName)}`, REWRITE_SLOT);
   }
@@ -1606,13 +1606,20 @@ const keepSlotFile = ({ wtRoot, seedName, stagesPath }) => {
   return slots.stage;
 };
 
-const writeSlotFile = ({ wtRoot, seedName, slot, gitDir, stagesPath, report, journal }) => {
+const composeSlotFile = ({ wtRoot, seedName, stage, stagesPath }) => {
+  const table = loadStageTable(stagesPath);
+  return refusingSlot(`cannot be composed for the stage ${displayValue(stage)}`, REMOVE_SLOT, () => {
+    const text = composeSlotText({ stage, values: { plan: `${PLANS_REL}/${seedName}` }, date: getLocalDate(), table });
+    validateSlots({ root: wtRoot, slotFile: SLOT_FILE_REL, table, text });
+    return text;
+  });
+};
+
+const writeSlotFile = ({ wtRoot, seedName, slot, stagesPath, fs, report, journal }) => {
   const stage = slot.write ? slot.stage : keepSlotFile({ wtRoot, seedName, stagesPath });
   if (slot.write) {
-    const errors = [];
-    const code = runStageWriter(['--write', SLOT_FILE_REL, '--stage', stage, '--plan', `${PLANS_REL}/${seedName}`],
-      { cwd: wtRoot, env: approvalEnv(gitDir), stagesPath, stdout: () => {}, stderr: (text) => errors.push(text) });
-    if (code !== TOOL_EXIT_OK) throw stop(`the stage writer refused ${SLOT_FILE_REL} (exit ${code}):\n${errors.join('').trimEnd()}`);
+    const text = composeSlotFile({ wtRoot, seedName, stage, stagesPath });
+    writeContainedFileAtomic(wtRoot, join(wtRoot, SLOT_FILE_REL), text, fs, { stop: (m) => stop(m) });
   }
   journal.record({ rel: SLOT_FILE_REL, surface: 'slot-file', outcome: slot.write ? 'written' : 'kept' });
   report.push(`  slot file: ${SLOT_FILE_REL} (${slot.write ? 'written' : 'kept'}, stage ${stage})`);
@@ -2425,7 +2432,7 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
 
   writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report, journal });
   carryApproval({ wtRoot: targetPath, gitDir: worktreeGitDir, match: approvalMatch, report });
-  writeSlotFile({ wtRoot: targetPath, seedName: seed.name, slot, gitDir: worktreeGitDir, stagesPath: deps.stagesPath, report, journal });
+  writeSlotFile({ wtRoot: targetPath, seedName: seed.name, slot, stagesPath: deps.stagesPath, fs, report, journal });
   const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, resume: flags.resume, git, fs, report, copied, journal });
   // Computed ONCE, from the satellite's own checkout, and threaded to both consumers — the report
   // lane and the record must state the SAME verdict.

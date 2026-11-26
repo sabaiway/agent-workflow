@@ -4,6 +4,64 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 24.0.0 — every session starts from its stage's template, code and tests wait for your recorded yes, and on Claude Code a guard refuses code writes in a stage that writes none (AD-241)
+
+**After `npx @sabaiway/agent-workflow-kit@latest init` and then `/agent-workflow-kit upgrade` in a new session, each
+session starts by rendering one kit template for its stage, and the tests, code, diff review and split edits of a
+plan start only after your yes on that plan is recorded.** Before, the next session's instruction was free text the
+agent wrote at the close, and nothing in the kit stopped an agent from writing a story's code in the session meant for
+its spec and plan. MAJOR: a plan in flight asks its yes again under this kit, a render or a dispatch of tests or code
+refuses without that yes, and a plan in the old row form is refused by name.
+
+- **One template per stage.** `node <kit>/tools/stage-render/cli.mjs docs/plans/next-session.json` renders the stage
+  the slot file names (eleven stages: epic, design consult, spec and plan, waiting on approval, tests, code, diff
+  review, split modules, split edits, pause, empty queue), its steps read from the installed engine, its plan or
+  queue row from the slot file. A work tree has one slot file, `docs/plans/next-session.json`. The handover's
+  `## Next session` holds the one render line; the session's close writes the next stage through
+  `--write docs/plans/next-session.json --stage <id>`.
+- **The close gives you a start prompt.** Outside a linked work tree `--write` prints two lines to paste into the next
+  session: the session's name with its plan or queue row, then ``To start: run `<the render command>` and follow the
+  stage it prints.`` A linked work tree prints none; `worktrees provision` writes its slot file itself and prints its
+  own command.
+- **Your yes is recorded and checked.** At a plan's approval the agent shows you the plan's essence in your dialogue
+  language and records your yes with `node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>` in
+  the git directory (`agent-workflow-plan-approvals.jsonl`); `check <plan>` reads it. The render of a tests, code,
+  diff-review or split-edits stage, the executor vehicle, `codex-exec` with a dispatch nonce (through the
+  `aw-plan-approval` block `stage-render/cli.mjs --dispatch <plan>` prints) and `worktrees provision` each refuse a plan
+  with no matching record, naming the record command. A change to the plan's approved part or to the text of its
+  contracts asks the yes again; amendment entries, robustness tags and a contract's status, revision, date and
+  scenario bindings do not change what the yes covers. A provisioned work tree matches its plan digest alone.
+- **On Claude Code, a stage that writes no code cannot write code through the edit tools.** The upgrade offers
+  `stage-guard`; on your chat yes, after its danger check prints the hook file and the settings entry, it places
+  `.claude/hooks/stage-write-guard.mjs` and adds one `hooks.PreToolUse` entry for `Write|Edit|MultiEdit|NotebookEdit`
+  to `.claude/settings.json`. Every render records its stage in the work tree's git directory
+  (`agent-workflow-stage.json`) where git answers one; while that stage writes no code, a write outside the authoring
+  documents is refused with a reason naming the stage and the render line, never a prompt. The authoring documents
+  are `.md` and `.json` files under `docs/ai/`, `.md` and `.txt` files under `docs/plans/`, the slot file, the debt
+  queue and convergence summary your orchestration config names when each is a `.md` file under `docs/`, and `.md`
+  files directly in Claude Code's memory and default plan-mode directories. The guard never allows or asks anything.
+  It does not bind the shell or another host. When neither the session's work tree nor the target's holds a record
+  and the path and git checks succeed, it makes no decision. A deliberate breach remains bound by the template's text
+  alone. A later kit refreshes the hook file as
+  `stage-guard.not-current`, with no question. `/agent-workflow-kit uninstall` names the guard's settings entry in
+  the edit it prints, since a wired guard keeps refusing after the kit is gone.
+- **Authoring rides a no-shell author agent.** `/agent-workflow-kit agents` places `.claude/agents/author.md`; plan
+  authoring and an epic's author slot ride it, each slot is judged by its role, and without it the author slot
+  resolves to solo with its reason stated. The executor vehicle no longer authors.
+- **A spec session's gates judge its contracts before any code exists.** `spec-check-cli.mjs --plan <plan>` judges
+  the plan's drafts and revisions, a revision of a live contract waits in the plan's revision home
+  `docs/plans/<plan stem>.specs/`, and the plan gate reads its facts on demand.
+- **A plan carries no line counts.** A ledger row holds five fields and the ledger no total line; the plan gate
+  judges no size and refuses the old six-field row (`retired-size-field`) and a total line (`retired-total-line`) by
+  name. The row cap is 45; a plan past a count that still belongs in one plan states why on one `One plan: ` line. A
+  file missed after the approval is an entry under `amendments:` with no new yes, and
+  `node <kit>/tools/plan-structure/cli.mjs <plan>` re-runs the plan's structure mid-flow.
+- **A size limit that fires asks whether the code rules were kept.** Each recorded raise takes its own reason.
+- The kit's tools read the project's locations from one definition (memory 11.2.0), and the state-block hook's
+  writer runs on the kit's one hook writer, every line it prints unchanged.
+- The codex bridge goes to 7.0.0: `codex-exec --help` names the `aw-plan-approval` stop; your next `init` or upgrade
+  refreshes it where you placed it.
+
 ## 23.12.0 — a skipped check keeps its whole reason in the upgrade report; three checkers open red output with the failure (AD-240)
 
 **After `npx @sabaiway/agent-workflow-kit@latest init` and then `/agent-workflow-kit upgrade` in a new session, a

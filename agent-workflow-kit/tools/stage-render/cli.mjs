@@ -7,11 +7,12 @@ import { writeContainedFileAtomic } from '../atomic-write.mjs';
 import { isDirectRun } from '../direct-run.mjs';
 import { PROCEDURES_FRAGMENT_REL, readEngineFragment, resolveEngineDir } from '../engine-source.mjs';
 import { readRegularFileNoFollow } from '../fs-read-nofollow.mjs';
-import { OUTCOME_LINES as APPROVAL_LINES, getLocalDate, readApproval } from '../plan-approval/cli.mjs';
+import { resolveGitLocation, stripGitLocationEnv } from '../git-env.mjs';
+import { OUTCOME_LINES as APPROVAL_LINES, getLocalDate, readApproval } from '../plan-approval/index.mjs';
 import { escapeForDisplay, isRenderableLine, isSeedablePathToken, shellQuoteArg } from '../repo-lex.mjs';
 import {
-  RECORD_GATED_STAGES, STAGES_REL, composeDispatchPart, composeRenderCommand, composeRenderLine, loadStages,
-  renderStage, validateSlots,
+  RECORD_GATED_STAGES, STAGES_REL, STAGE_RECORD_BASENAME, composeDispatchPart, composeRenderCommand, composeRenderLine,
+  composeSlotText, composeStageRecord, composeStartPrompt, loadStages, renderStage, validateSlots,
 } from './index.mjs';
 
 const CLI_PATH = fileURLToPath(import.meta.url);
@@ -22,26 +23,32 @@ const DISPATCH = '--dispatch';
 const STAGE_FLAG = '--stage';
 const DECISIONS_FLAG = '--decisions';
 const DECISION_SEPARATOR = '#';
-const VALUE_FLAGS = Object.freeze(['plan', 'epic', 'story', 'queue-row', 'file']);
+const VALUE_FLAGS = Object.freeze(['plan', 'queue-row']);
 const WAITING_STAGE = 'waiting-on-approval';
 const UPGRADE = 'upgrade the kit and its engine (/agent-workflow-kit upgrade)';
-const SCHEMA = 1;
+const START_HEADER = 'the start prompt, shown to the user unchanged:';
+const WRITES_AUTHORING = 'authoring';
+const WRITES_ANY = 'any';
+const LOCATED = 'work-tree';
+const NO_REPOSITORY = 'not-a-repository';
 const EXIT_OK = 0;
 const EXIT_REFUSE = 1;
 const EXIT_USAGE = 2;
 const LINE_ENDING = '\n';
-const JSON_INDENT = 2;
 const display = escapeForDisplay;
 
 export const OUTCOME_LINES = Object.freeze({
-  usage: (reason) => `Usage: node ${display(CLI_TOKEN)} <slot file> | ${WRITE} <slot file> ${STAGE_FLAG} <id> [--plan <path>] [--epic <path>] [--story <id>] [--queue-row <id>] [--file <path>] [${DECISIONS_FLAG} <path>#<heading>]... | ${DISPATCH} <plan> — ${display(reason)}`,
+  usage: (reason) => `Usage: node ${display(CLI_TOKEN)} <slot file> | ${WRITE} <slot file> ${STAGE_FLAG} <id> [--plan <path>] [--queue-row <id>] [${DECISIONS_FLAG} <path>#<heading>]... | ${DISPATCH} <plan> — ${display(reason)}`,
   cannotRender: (subject, reason) => `stage-render: CANNOT RENDER — ${display(subject)}: ${display(reason)}; ${UPGRADE}`,
   refused: (subject, reason) => `stage-render: REFUSE — ${display(subject)}: ${display(reason)}`,
   unapproved: (stage, plan, reason) => `stage-render: REFUSE — ${display(stage)} for ${display(plan)} waits for its approval record, so the stage is ${WAITING_STAGE}; ${APPROVAL_LINES.refused(plan, reason)}`,
   finding: (plan, finding) => APPROVAL_LINES.finding(plan, finding),
   malformed: (recordPath, line) => APPROVAL_LINES.malformed(recordPath, line),
+  unlocated: (reason) => `stage-render: ERROR — cannot locate the git directory of ${STAGE_RECORD_BASENAME}: ${display(reason)}`,
+  recordFailed: (recordPath, reason) => `stage-render: ERROR — cannot record the stage at ${display(recordPath)}: ${display(reason)}`,
   writeFailed: (slotFile, reason) => `stage-render: ERROR — cannot write ${display(slotFile)}: ${display(reason)}`,
   written: (slotFile) => `stage-render: WRITTEN — ${display(slotFile)}; its render line and the command that runs it here:`,
+  startHeader: () => START_HEADER,
   text: (line) => display(line),
 });
 
@@ -74,6 +81,25 @@ const parseArgs = (argv) => {
     return flags?.stage === undefined ? { usage: `${WRITE} takes one slot file, ${STAGE_FLAG} once and known flags` } : { command: WRITE, slotFile: second, ...flags };
   }
   return argv.length === 1 && isOperand(first) ? { command: 'render', slotFile: first } : { usage: 'one slot file, --write or --dispatch' };
+};
+
+const locateGitDir = ({ cwd, env }) => {
+  const location = resolveGitLocation(cwd, { env: stripGitLocationEnv(env) });
+  if (location.state === NO_REPOSITORY) return null;
+  if (location.state !== LOCATED) throw halt(EXIT_USAGE, [OUTCOME_LINES.unlocated(location.cause)]);
+  return location;
+};
+
+const isMainTree = (location) => location === null || location.gitDir === location.commonDir;
+
+const recordStage = (location, slotFile, stage, writes) => {
+  if (location === null) return;
+  const recordPath = join(location.gitDir, STAGE_RECORD_BASENAME);
+  try {
+    writeContainedFileAtomic(location.gitDir, recordPath, composeStageRecord({ stage, slotFile, writes }), {}, { label: recordPath });
+  } catch (error) {
+    throw halt(EXIT_USAGE, [OUTCOME_LINES.recordFailed(recordPath, error.message)]);
+  }
 };
 
 const loadTable = ({ stagesPath }) => {
@@ -117,18 +143,24 @@ const validate = (io, slotFile, table, text) => {
 };
 
 const runRender = (io, { slotFile }) => {
+  const location = locateGitDir(io);
+  recordStage(location, slotFile, null, WRITES_AUTHORING);
   const table = loadTable(io);
   const slots = validate(io, slotFile, table);
   const gated = RECORD_GATED_STAGES.includes(slots.stage);
   const match = gated ? requireApproval(io, slots.plan, slots.stage) : null;
   const canon = readCanon(io.env);
-  try {
-    io.stdout(renderStage({ root: io.cwd, slotFile, slots, table, canon, match }));
-  } catch (error) {
-    throw error.stage === WAITING_STAGE
-      ? halt(EXIT_REFUSE, [OUTCOME_LINES.unapproved(slots.stage, slots.plan, error.message)])
-      : halt(EXIT_USAGE, [OUTCOME_LINES.cannotRender(PROCEDURES_FRAGMENT_REL, error.message)]);
-  }
+  const rendering = (() => {
+    try {
+      return renderStage({ root: io.cwd, slotFile, slots, table, canon, match });
+    } catch (error) {
+      throw error.stage === WAITING_STAGE
+        ? halt(EXIT_REFUSE, [OUTCOME_LINES.unapproved(slots.stage, slots.plan, error.message)])
+        : halt(EXIT_USAGE, [OUTCOME_LINES.cannotRender(PROCEDURES_FRAGMENT_REL, error.message)]);
+    }
+  })();
+  recordStage(location, slotFile, slots.stage, gated ? WRITES_ANY : WRITES_AUTHORING);
+  io.stdout(rendering);
 };
 
 const runDispatch = (io, { plan }) => {
@@ -136,31 +168,40 @@ const runDispatch = (io, { plan }) => {
   composeDispatchPart({ plan: approval.verdict.identity, match: approval }).split(LINE_ENDING).forEach((line) => io.out(OUTCOME_LINES.text(line)));
 };
 
-
-const composeValues = (stage, declared, { values, decisions }) => {
-  const kinds = Object.values(declared);
-  const extra = [...Object.keys(values), ...(decisions.length ? ['decisions'] : [])].find((kind) => !kinds.includes(kind));
-  if (extra !== undefined) throw halt(EXIT_REFUSE, [OUTCOME_LINES.refused(`--${extra}`, `the stage ${stage} names no ${extra} slot`)]);
-  const all = { ...values, decisions };
-  const missing = kinds.find((kind) => !Object.hasOwn(all, kind));
-  if (missing !== undefined) throw halt(EXIT_REFUSE, [OUTCOME_LINES.refused(`--${missing}`, `the stage ${stage} needs --${missing}`)]);
-  return Object.fromEntries(Object.entries(declared).map(([name, kind]) => [name, all[kind]]));
+const refusing = (subject, compose) => {
+  try {
+    return compose();
+  } catch (error) {
+    throw halt(EXIT_REFUSE, [OUTCOME_LINES.refused(subject, error.message)]);
+  }
 };
+
+const composeText = (table, { stage, values, decisions }) => refusing(STAGE_FLAG,
+  () => composeSlotText({ stage, values: { ...values, decisions }, date: getLocalDate(), table }));
+
+const composeWrittenLines = (slotFile, slots, table, location) => refusing(slotFile, () => {
+  const prompt = isMainTree(location)
+    ? [OUTCOME_LINES.startHeader(), ...composeStartPrompt({ slotFile, slots, table }).split(LINE_ENDING).map(OUTCOME_LINES.text)]
+    : [];
+  return [OUTCOME_LINES.written(slotFile), OUTCOME_LINES.text(composeRenderLine(slotFile)), OUTCOME_LINES.text(composeRenderCommand(slotFile)), ...prompt];
+});
 
 const runWrite = (io, flags) => {
   const { slotFile, stage } = flags;
   const table = loadTable(io);
-  if (!Object.hasOwn(table.stages, stage)) throw halt(EXIT_REFUSE, [OUTCOME_LINES.refused(STAGE_FLAG, `${stage} is not a stage id`)]);
-  const slots = { schema: SCHEMA, stage, date: getLocalDate(), ...composeValues(stage, table.stages[stage].slots, flags) };
-  const text = `${JSON.stringify(slots, null, JSON_INDENT)}${LINE_ENDING}`;
-  validate(io, slotFile, table, text);
-  if (RECORD_GATED_STAGES.includes(stage)) requireApproval(io, slots.plan, stage);
+  const text = composeText(table, flags);
+  const slots = validate(io, slotFile, table, text);
+  const gated = RECORD_GATED_STAGES.includes(stage);
+  if (gated) requireApproval(io, slots.plan, stage);
+  const location = locateGitDir(io);
+  const lines = composeWrittenLines(slotFile, slots, table, location);
+  if (!gated) recordStage(location, slotFile, stage, WRITES_AUTHORING);
   try {
     writeContainedFileAtomic(io.cwd, join(io.cwd, slotFile), text, {}, { label: slotFile });
   } catch (error) {
     throw halt(EXIT_USAGE, [OUTCOME_LINES.writeFailed(slotFile, error.message)]);
   }
-  [OUTCOME_LINES.written(slotFile), OUTCOME_LINES.text(composeRenderLine(slotFile)), OUTCOME_LINES.text(composeRenderCommand(slotFile))].forEach(io.out);
+  lines.forEach(io.out);
 };
 
 const COMMANDS = Object.freeze({ render: runRender, [WRITE]: runWrite, [DISPATCH]: runDispatch });

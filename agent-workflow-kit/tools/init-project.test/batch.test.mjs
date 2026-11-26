@@ -216,6 +216,23 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     put(join(f.root, HOOK_FILE_REL), 'process.exit(0);\n');
     put(join(f.root, '.claude/settings.json'), JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] } }));
   };
+  const STAGE_GUARD_REL = '.claude/hooks/stage-write-guard.mjs';
+  const STAGE_GUARD_WRITER = join(TOOLS, 'stage-write-guard', 'cli.mjs');
+  const STAGE_GUARD_BUNDLE = join(TOOLS, '../references/hooks/stage-write-guard.mjs');
+  const respondWithStageGuardWriter = (f) => {
+    const respond = f.respond;
+    f.respond = (argv, opts) => {
+      if (argv[1] !== STAGE_GUARD_WRITER) return respond(argv, opts);
+      assert.equal(argv[0], 'node');
+      const result = spawnSync(process.execPath, argv.slice(1), { cwd: opts.cwd, env: opts.env, encoding: 'utf8' });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+  };
+  const assertCheckAfterPreview = (f, variant) => {
+    const preview = f.printed.indexOf(`preview: ${variant}`);
+    const scope = f.printed.indexOf(`scope: within the declared scope of ${variant}`);
+    assert.ok(preview >= 0 && scope > preview + 1 && f.printed.indexOf(RUN_NONE) > scope, `${variant}: check lines follow its preview`);
+  };
 
   it('gate-hook over a differing unwired hook and state-block apply on one y, print each check after its preview, and leave no pending item', async (t) => {
     const variants = ['gate-hook', 'state-block'];
@@ -310,6 +327,44 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     }
     assert.match(readFileSync(join(f.root, PRE_COMMIT), 'utf8'), /:install-git-hooks\.mjs$/m);
     assert.deepEqual(pending(f), []);
+  });
+
+  it('stage-guard applies on one y: the hook placed, its PreToolUse entry in .claude/settings.json, the check after its preview, and no pending item', async (t) => {
+    const { buildStageGuardEntry, isStageGuardWired } = await import('../stage-write-guard/index.mjs');
+    const f = realFixture(t, new Set(['stage-guard']));
+    assert.deepEqual(pending(f), ['stage-guard']);
+    respondWithStageGuardWriter(f);
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [['node', STAGE_GUARD_WRITER, '--apply', '--cwd', f.root]]);
+    assertCheckAfterPreview(f, 'stage-guard');
+    assert.deepEqual(pending(f), []);
+    assert.equal(readFileSync(join(f.root, STAGE_GUARD_REL), 'utf8'), readFileSync(STAGE_GUARD_BUNDLE, 'utf8'));
+    const settings = JSON.parse(readFileSync(join(f.root, '.claude/settings.json'), 'utf8'));
+    assert.equal(isStageGuardWired(settings), true);
+    assert.deepEqual(settings.hooks.PreToolUse, [buildStageGuardEntry()]);
+  });
+
+  it('stage-guard.not-current refreshes a wired hook whose file differs on one y, both settings files byte-identical, and is listed no more', async (t) => {
+    const { buildStageGuardEntry } = await import('../stage-write-guard/index.mjs');
+    const f = realFixture(t, new Set(['stage-guard.not-current']));
+    put(join(f.root, STAGE_GUARD_REL), 'process.exit(0);\n');
+    put(join(f.root, '.claude/settings.json'), JSON.stringify({ hooks: { PreToolUse: [buildStageGuardEntry()] } }));
+    put(join(f.root, '.claude/settings.local.json'), '{"otherLocal":"kept"}\n');
+    const settingsBytes = () => ['.claude/settings.json', '.claude/settings.local.json'].map((rel) => readFileSync(join(f.root, rel)));
+    const before = settingsBytes();
+    assert.deepEqual(pending(f), ['stage-guard.not-current']);
+    respondWithStageGuardWriter(f);
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.deepEqual(f.calls.map(({ argv }) => argv), [
+      ['node', STAGE_GUARD_WRITER, '--cwd', f.root],
+      ['node', STAGE_GUARD_WRITER, '--apply', '--cwd', f.root],
+    ]);
+    assertCheckAfterPreview(f, 'stage-guard.not-current');
+    assert.deepEqual(pending(f), []);
+    assert.equal(readFileSync(join(f.root, STAGE_GUARD_REL), 'utf8'), readFileSync(STAGE_GUARD_BUNDLE, 'utf8'));
+    assert.deepEqual(settingsBytes(), before);
   });
 });
 

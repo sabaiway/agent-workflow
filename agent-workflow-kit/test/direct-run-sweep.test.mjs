@@ -63,7 +63,9 @@ const FAMILY_CLIS = ['docs-size/check-docs-size.mjs', 'archives/archive-changelo
 const STANDALONE_MODULES = Object.freeze([
   ...['agent-workflow-memory', 'agent-workflow-kit'].flatMap((pkg) => FAMILY_CLIS.map((path) => `${pkg}/references/scripts/${path}`)),
   'agent-workflow-kit/references/hooks/state-block-guard.mjs',
+  'agent-workflow-kit/references/hooks/stage-write-guard.mjs',
   'agent-workflow-kit/references/hooks/gate-approve.mjs',
+  'agent-workflow-kit/tools/stage-write-guard/cli.mjs',
 ]);
 const REMAINING_STANDALONE_MODULES = Object.freeze([
   'agent-workflow-memory/scripts/stamp-takeover.mjs',
@@ -86,8 +88,8 @@ test('the swept-module list is complete and duplicate-free', () => {
 });
 
 test('the standalone-module list is complete and duplicate-free', async () => {
-  assert.equal(STANDALONE_MODULES.length, 12, 'the frozen W2 site list is 12 files');
-  assert.equal(new Set(STANDALONE_MODULES).size, 12, 'the frozen W2 site list has no duplicate entry');
+  assert.equal(STANDALONE_MODULES.length, 14, 'the frozen W2 site list is 14 files');
+  assert.equal(new Set(STANDALONE_MODULES).size, 14, 'the frozen W2 site list has no duplicate entry');
   for (const pkg of ['agent-workflow-memory', 'agent-workflow-kit']) {
     const { readFamily } = await import(pathToFileURL(join(REPOSITORY_ROOT, pkg, 'references', 'scripts', 'family.mjs')).href);
     const paths = readFamily().map(({ path }) => path);

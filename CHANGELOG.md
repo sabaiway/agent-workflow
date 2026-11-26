@@ -7,6 +7,37 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-26 — AD-241: every stage is told by one kit template, code and tests wait for the recorded yes, and on Claude Code a guard refuses code writes in a stage that writes none (kit 24.0.0 MAJOR, engine 7.0.0 MAJOR, codex bridge 7.0.0 MAJOR, memory 11.2.0 MINOR; agy and the judge unchanged)
+
+Ships the twelve commits since `a64860c` (stories S1-S4 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN, S1-S5 of
+EVERY-LOCATION-IS-NAMED-ONCE, S1-S2 of A-PLAN-CARRIES-NO-LINE-COUNTS and the plan row cap 25 -> 45, each landed with no
+release) and story S5 of the first epic, which rides this commit.
+
+**S5.** New bundled hook **`agent-workflow-kit/references/hooks/stage-write-guard.mjs`** (self-contained, one generated
+region of locations, the record basename, the slot file name, the render line and the stage table's ids, written by the
+new sync-mirrors family `stage-guard-locations`), new modules **`tools/stage-write-guard/`** (`index.mjs` exports
+`STAGE_GUARD_HOOK_COMMAND`, `STAGE_GUARD_MATCHER`, `buildStageGuardEntry`, `isStageGuardWired`, `writeStageGuard`;
+`cli.mjs` `[--apply] --cwd <root>`) and **`tools/hook-writer/`** (`mergeHookEntryInto`, `writeKitHook`,
+`formatKitHookResult`), which `state-block-hook.mjs` now runs on with every line unchanged; `gate-hook.mjs` exports
+`assertSafeModes` and `assertStampCurrent`. **`tools/stage-render/`**: every render writes `agent-workflow-stage.json`
+in the git directory where git answers one (`composeStageRecord`), a no-code rendering carries `GUARD_LINE`, `--write`
+prints the start prompt outside a linked work tree (`composeStartPrompt`, the table's new `title`), one slot file `docs/plans/next-session.json` per work tree
+(`SLOT_FILE_NAME`), slot kinds `plan`, `queue-row`, `decisions`; the door imports nothing from plan-approval.
+**`tools/plan-approval/`**: `entries.mjs` and `record.mjs` are new, `index.mjs` only re-exports the door's set, `cli.mjs`
+imports `record.mjs`. `worktrees.mjs` writes the satellite's slot file from `composeSlotText` through its own journaled
+write. The advisor gains `stage-guard` and `stage-guard.not-current` (`recommendations.mjs`, `write-lanes.mjs`,
+`apply-danger-check.mjs`, `references/advisor-writers.md`, the mode notes); `uninstall.mjs` names a wired guard entry in
+either settings file. `locations.mjs` (memory and its kit copy) gains `STAGE_GUARD_HOOK`. `codex-exec.sh --help` and
+`capability.json` name the `aw-plan-approval` stop; `detect-backends.mjs` carries the registry mirror. The engine's
+`references/procedures.md` start paragraph takes a start prompt's command. Packed lists, the direct-run sweep, the
+checker catalog, `package-seal.test.mjs`, `ci.yml` and `_publish-one.yml` gain the new files and folders. Specs
+`kit/stage-write-guard` and `kit/hook-writer` revision 1 (new), `kit/stage-render` revision 2, `kit/plan-approval`
+revision 3, `kit/install/init-project` revision 37 (hook-writers revision 9), `kit/install/distribution-files`
+revision 34. Closes debt rows READING-ENTRY-LIVES-IN-ANOTHER-MODULES-CLI, SLOT-KINDS-NO-STAGE-NAMES,
+STATE-BLOCK-HOOK-RESTATES-TWO-GATE-HOOK-REFUSALS, DISPATCH-BLOCK-OF-ANOTHER-PLAN-PASSES-CODEX-EXEC (declared) and
+CODEX-EXEC-HELP-OMITS-THE-APPROVAL-STOP; new debt rows STAGE-WRITER-START-PROMPT-WITH-NO-GIT-DIRECTORY and
+UNINSTALL-NAMES-NO-KIT-HOOK-BUT-THE-GATE-HOOK.
+
 ## 2026-11-19 — AD-240: a skipped check's report keeps its whole reason; the control-byte gate, the release scan and the doc-parity lint open their red output with the failure (kit 23.12.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/advisor-skip/index.mjs`** (new) exports `SKIP_REASON_CAP`, `composeSkip` and

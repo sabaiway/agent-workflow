@@ -64,9 +64,9 @@ tokens, gets a neutral line naming them; orphanhood is claimed only where it is 
   (`node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>`).
   `--stage <id>` (one of the record-gated stages `tests`, `code`, `diff-review`, `split-edits`;
   `tests` when absent; any other id is a usage STOP) names the stage the worktree's slot file
-  `docs/plans/next-session.json` carries (spec `kit/stage-render`). Provision writes it through the
-  stage writer (`node <kit>/tools/stage-render/cli.mjs --write`) after the plan is seeded and its
-  record carried, before the post-provision verify; it is the journaled surface `slot-file`, a path
+  `docs/plans/next-session.json` carries (spec `kit/stage-render`). Provision composes it with the
+  stage renderer's `composeSlotText` and writes it through its own journaled write after the plan is
+  seeded and its record carried, before the post-provision verify; it is the journaled surface `slot-file`, a path
   an `--include` may not overlap, and a plans-chain path: tracked, it refuses in both lanes as the
   handoff and the seeded plan do (below). A link or any other non-regular node at its path refuses
   before the first provision write. With `--stage`, `--resume` rewrites the slot

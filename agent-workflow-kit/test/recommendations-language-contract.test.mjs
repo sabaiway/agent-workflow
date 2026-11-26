@@ -479,7 +479,7 @@ const SLOT_VARIANTS = Object.freeze([
   'gate-hook', 'mcp-channel', 'mcp-channel.differing',
   'agents', 'executor-vehicle', 'sandbox-provision.installable', 'jev-skill',
   'jev-skill.not-current', 'jev-connect', 'family-freshness',
-  'state-block', 'sandbox-provision',
+  'state-block', 'stage-guard', 'sandbox-provision',
   'enforcement', 'commit-guard',
   'gates-inert.unfillable', 'gates-inert.producer-unrecognized',
   'source-size.id-squatter', 'review-recipe',
@@ -771,7 +771,7 @@ describe('spec:velocity-profile/S21 — shipped bridge keys have no hand-apply a
 });
 
 describe('spec:init-project/S33 shipped text of the three writers', () => {
-  const variants = Object.freeze(['gate-hook', 'state-block', 'gate-hook.not-current', 'state-block.not-current']);
+  const variants = Object.freeze(['gate-hook', 'state-block', 'gate-hook.not-current', 'state-block.not-current', 'stage-guard', 'stage-guard.not-current']);
   const bannedTokens = /HAND-APPLY|\brm\b|No writer yet|has no writer|yours to paste|by hand/iu;
   const stateBlockDoc = read('references/modes/state-block-guard.md');
   const gatesDoc = read('references/modes/gates.md');
@@ -812,6 +812,24 @@ describe('spec:init-project/S33 shipped text of the three writers', () => {
       assert.match(note, /after the check/i, key);
       assert.match(note, /\binit\b[^.]*\b(?:may take|instead)\b/i, key);
     }
+  });
+
+  it('one stage-guard posture note names the offer and the kit item', () => {
+    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+    const start = '- `stage-guard` —';
+    const matching = notes.split(POSTURE_NOTE_BOUNDARY).filter((note) => note.startsWith(start.slice(2)));
+    assert.equal(matching.length, 1, 'stage-guard posture note');
+    const note = matching[0];
+    assert.ok(note.includes('`stage-guard.not-current`'), 'stage-guard names the kit item');
+    assert.doesNotMatch(note, bannedTokens);
+  });
+
+  it('the stage-guard offer and kit item have the specified WHAT and benefit', async () => {
+    const { WHATS, VARIANT_BENEFITS } = await import('../tools/recommendations.mjs');
+    assert.equal(WHATS['stage-guard'], 'refuse a code or test write through the edit tools while the recorded stage writes no code');
+    assert.equal(BENEFITS['stage-guard'], 'prevention — a stage that writes no code cannot write it through the edit tools');
+    assert.equal(WHATS['stage-guard.not-current'], '.claude/hooks/stage-write-guard.mjs is absent or differs from the body the kit writes for it — written with that body, with no question');
+    assert.equal(VARIANT_BENEFITS['stage-guard.not-current'], 'currency — a hook you wired runs the body the kit writes for it today');
   });
 
   it('state-block-guard.md names the writer and its offered command, including the --require-block paragraph', () => {

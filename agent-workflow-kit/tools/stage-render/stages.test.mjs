@@ -35,6 +35,7 @@ const IDS = Object.keys(ADDRESSES);
 const fixture = () => ({
   schema: 1,
   stages: Object.fromEntries(Object.entries(ADDRESSES).map(([id, steps]) => [id, {
+    title: `${id} session`,
     goal: 'Keep the guide current.', steps: structuredClone(steps), doNot: ['Publish.'],
     output: 'A guide.', done: 'The guide is current.', next: IDS.slice(),
     slots: GATED.includes(id) ? { plan: 'plan' } : {},
@@ -91,7 +92,8 @@ describe('spec:stage-render/S5 strict stage table and live engine addresses', ()
     assert.deepEqual(Object.keys(table.stages).sort(), IDS.slice().sort());
     assert.deepEqual([...RECORD_GATED_STAGES].sort(), GATED.slice().sort());
     for (const [id, entry] of Object.entries(table.stages)) {
-      assert.deepEqual(Object.keys(entry).sort(), ['doNot', 'done', 'goal', 'next', 'output', 'slots', 'steps']);
+      assert.deepEqual(Object.keys(entry).sort(), ['doNot', 'done', 'goal', 'next', 'output', 'slots', 'steps', 'title']);
+      assert.equal(typeof entry.title, 'string');
       assert.deepEqual(entry.steps, ADDRESSES[id], id);
       if (GATED.includes(id)) assert.ok(Object.values(entry.slots).includes('plan'), id);
       assert.ok(entry.next.every((next) => IDS.includes(next)), id);
@@ -129,6 +131,12 @@ describe('spec:stage-render/S5 strict stage table and live engine addresses', ()
     const valid = fixture();
     assert.deepEqual(loadStages(JSON.stringify(valid)), valid);
     const cases = [
+      ['title', (table) => { delete table.stages.epic.title; }],
+      ['title', (table) => { table.stages.epic.title = ''; }],
+      ['title', (table) => { table.stages.epic.title = 'First line\nSecond line'; }],
+      ['title', (table) => { table.stages.epic.title = 'Epic session.'; }],
+      ['title', (table) => { table.stages.epic.title = 1; }],
+      ['title', (table) => { table.stages.epic.title = table.stages.tests.title; }],
       ['schema', (table) => { table.schema = 2; }],
       ['schema', (table) => { delete table.schema; }],
       ['stages', (table) => { table.stages = []; }],

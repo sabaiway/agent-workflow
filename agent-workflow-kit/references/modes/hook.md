@@ -2,6 +2,7 @@
 
 <!-- opt-in-capability: gate-hook -->
 <!-- opt-in-capability: read-lane -->
+<!-- opt-in-capability: stage-guard -->
 
 The opt-in **gate-approval PreToolUse hook** — the family's third `.claude/` writer (velocity discipline), and the shipped closure of the velocity trust-posture residual (**AD-021 scope C, probe-proven in AD-037**). It places a **self-contained** hook runtime at `.claude/hooks/agent-workflow-gates.mjs` (no kit imports — it keeps working if the kit is uninstalled) and wires ONE `PreToolUse` `"Bash"` entry into `.claude/settings.json`. Per Bash call the hook then walks a decision ladder, first match wins:
 
@@ -41,4 +42,6 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/gate-hook.mjs [--dry-run | --apply] [--cwd <
 
 **Exit codes:** `0` done / dry-run; `1` a precondition STOP; `2` bad arguments.
 
-**The kit's other hook.** `state-block-guard` (see `${CLAUDE_SKILL_DIR}/references/modes/state-block-guard.md`) is a separate, unrelated `Stop` hook that judges the closing state block of a turn. Its writer is `tools/state-block-hook.mjs` (the advisor's `state-block` item), it never approves or denies anything, and this mode neither places nor wires it — the two hooks share only the `.claude/` directory they live in and the hardened placement discipline the state-block writer imports from `gate-hook.mjs`.
+**The kit's other hook.** `state-block-guard` (see `${CLAUDE_SKILL_DIR}/references/modes/state-block-guard.md`) is a separate, unrelated `Stop` hook that judges the closing state block of a turn. Its writer is `tools/state-block-hook.mjs` (the advisor's `state-block` item), it never approves or denies anything, and this mode neither places nor wires it — the two hooks share only the `.claude/` directory they live in and the hardened placement discipline the state-block writer takes from `gate-hook.mjs` through the kit's hook writer `tools/hook-writer/index.mjs`.
+
+**The kit's third hook.** The stage write guard (`.claude/hooks/stage-write-guard.mjs`) is a `PreToolUse` hook on the edit tools (`Write|Edit|MultiEdit|NotebookEdit`) that refuses a write outside the authoring documents while the stage last rendered writes no code — a deny, never a prompt or an approval. Its writer is `tools/stage-write-guard/cli.mjs`, running on the same hook writer (the advisor's `stage-guard` offer, and over a wired guard the kit item `stage-guard.not-current`); this mode neither places nor wires it.

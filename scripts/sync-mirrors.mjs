@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // sync-mirrors.mjs — the canon → mirror synchronizer for the four byte-identical mirror
 // families, the generator of each canon bridge's service-facts.txt (spec kit/services), which
-// runs first so the bridge mirror carries the fresh file, and of the bundled gate hook's generated
-// region (spec kit/install/init-project, part gate-hook-lists) (repo-local, tracked; repo-only
-// tooling — never shipped in any tarball).
+// runs first so the bridge mirror carries the fresh file, of the bundled gate hook's generated
+// region (spec kit/install/init-project, part gate-hook-lists) and of the bundled stage write guard's
+// (spec kit/stage-write-guard) (repo-local, tracked; repo-only tooling — never shipped in any tarball).
 //
 // The kit ships byte-identical MIRROR copies of content whose canon lives elsewhere in the
 // monorepo. Three test files DETECT drift of the first three (bridges-mirror.test.mjs,
@@ -42,7 +42,8 @@ import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadServiceFragments, mergeServices, renderServiceFacts, SERVICE_FACTS_FILE } from '../agent-workflow-kit/tools/services/index.mjs';
 import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
-import { GATES, LANES } from '../agent-workflow-memory/references/scripts/shared/index.mjs';
+import { DOCS, DOCS_TREE, GATES, LANES, ORCHESTRATION, PLANS, STAGE_GUARD_HOOK } from '../agent-workflow-memory/references/scripts/shared/index.mjs';
+import { SLOT_FILE_NAME, STAGES_REL, STAGE_RECORD_BASENAME, composeRenderLine, loadStages } from '../agent-workflow-kit/tools/stage-render/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..');
@@ -62,6 +63,9 @@ const TEMPLATES_REL = 'references/templates';
 const GATE_HOOK_REL = `${KIT_DIR}/references/hooks/gate-approve.mjs`;
 const GATE_HOOK_LISTS_BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs and agent-workflow-memory/references/scripts/shared/locations.mjs by scripts/sync-mirrors.mjs; do not edit';
 const GATE_HOOK_LISTS_END = '// end of the generated lists';
+const STAGE_GUARD_REL = `${KIT_DIR}/references/hooks/stage-write-guard.mjs`;
+const STAGE_GUARD_LOCATIONS_BEGIN = '// generated from agent-workflow-memory/references/scripts/shared/locations.mjs and agent-workflow-kit/tools/stage-render/ (index.mjs, stages.json) by scripts/sync-mirrors.mjs; do not edit';
+const STAGE_GUARD_LOCATIONS_END = '// end of the generated locations';
 // The prune both installers take (spec upgrade-delivery, part payload-prune): one canon, one kit copy.
 const PRUNE_CANON = `${MEMORY_DIR}/bin/payload-prune.mjs`;
 const PRUNE_COPY = `${KIT_DIR}/tools/payload-prune.mjs`;
@@ -236,8 +240,14 @@ export const renderGateHookLists = (readonlyCore, residualForms, locations) => [
   GATE_HOOK_LISTS_END,
 ].join('\n');
 
-const planGateHookLists = (root) => {
-  const to = join(root, GATE_HOOK_REL);
+const renderStageGuardLocations = (locations, stage) => [
+  STAGE_GUARD_LOCATIONS_BEGIN,
+  ...Object.entries({ ...locations, ...stage }).map(([name, value]) => `const ${name} = ${renderLiteral(value)};`),
+  STAGE_GUARD_LOCATIONS_END,
+].join('\n');
+
+const planGeneratedRegion = (root, rel, begin, end, render) => {
+  const to = join(root, rel);
   const hook = (() => {
     try {
       return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(to)) };
@@ -246,23 +256,43 @@ const planGateHookLists = (root) => {
     }
   })();
   const lines = hook.text?.split('\n') ?? [];
-  const beginLines = lines.flatMap((line, index) => line === GATE_HOOK_LISTS_BEGIN ? [index] : []);
-  const endLines = lines.flatMap((line, index) => line === GATE_HOOK_LISTS_END ? [index] : []);
+  const beginLines = lines.flatMap((line, index) => line === begin ? [index] : []);
+  const endLines = lines.flatMap((line, index) => line === end ? [index] : []);
   if (typeof hook.text === 'string' && beginLines.length === 1 && endLines.length === 1 && endLines[0] > beginLines[0]) {
-    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, { GATES, LANES });
-    const begin = beginLines[0];
+    const first = beginLines[0];
     const afterEnd = endLines[0] + 1;
-    if (lines.slice(begin, afterEnd).join('\n') === render) return { changes: [], identical: 1 };
-    const content = [...lines.slice(0, begin), render, ...lines.slice(afterEnd)].join('\n');
-    return { changes: [{ action: 'write', rel: GATE_HOOK_REL, to, content }], identical: 0 };
+    if (lines.slice(first, afterEnd).join('\n') === render) return { changes: [], identical: 1 };
+    const content = [...lines.slice(0, first), render, ...lines.slice(afterEnd)].join('\n');
+    return { changes: [{ action: 'write', rel, to, content }], identical: 0 };
   }
-  throw fail(1, `${GATE_HOOK_REL}: refusing to sync: ${hook.error?.message ?? 'expected exactly one begin line and one later end line'}`);
+  throw fail(1, `${rel}: refusing to sync: ${hook.error?.message ?? 'expected exactly one begin line and one later end line'}`);
 };
+
+const planGateHookLists = (root) => planGeneratedRegion(root, GATE_HOOK_REL, GATE_HOOK_LISTS_BEGIN, GATE_HOOK_LISTS_END,
+  renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, { GATES, LANES }));
+
+const readStageIds = (root) => {
+  const rel = `${KIT_DIR}/${STAGES_REL}`;
+  try {
+    return Object.keys(loadStages(readFileSync(join(root, rel), 'utf8')).stages);
+  } catch (error) {
+    throw fail(1, `${STAGE_GUARD_REL}: refusing to sync: the stage table ${rel} (${error.code ?? error.message})`);
+  }
+};
+
+const planStageGuardLocations = (root) => planGeneratedRegion(root, STAGE_GUARD_REL, STAGE_GUARD_LOCATIONS_BEGIN, STAGE_GUARD_LOCATIONS_END,
+  renderStageGuardLocations({ DOCS, DOCS_TREE, PLANS, ORCHESTRATION, STAGE_GUARD_HOOK }, {
+    STAGE_RECORD_BASENAME, SLOT_FILE_NAME, RENDER_LINE: composeRenderLine(`${PLANS}/${SLOT_FILE_NAME}`), STAGE_IDS: readStageIds(root),
+  }));
 
 // All families, in canonical order → [{ family, changes, identical }].
 export const planAllMirrors = (root) => {
   const facts = planServiceFacts(root);
-  const plans = [{ family: 'service-facts', ...facts }, { family: 'gate-hook-lists', ...planGateHookLists(root) }];
+  const plans = [
+    { family: 'service-facts', ...facts },
+    { family: 'gate-hook-lists', ...planGateHookLists(root) },
+    { family: 'stage-guard-locations', ...planStageGuardLocations(root) },
+  ];
   for (const bridge of BRIDGE_DIRS) {
     plans.push({ family: `bridge:${bridge}`, ...planTreeSync(root, bridge, join(KIT_DIR, 'bridges', bridge), facts.changes) });
   }

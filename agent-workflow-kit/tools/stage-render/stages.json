@@ -2,6 +2,7 @@
   "schema": 1,
   "stages": {
     "epic": {
+      "title": "Epic session",
       "goal": "Write the epic file: its intent, value, non-goals, acceptance, specs and stories in order, at concept altitude.",
       "steps": [{ "activity": "epic", "part": null, "from": 1, "to": 6 }],
       "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Name a mechanism or a file line in the epic."],
@@ -11,6 +12,7 @@
       "slots": { "queue-row": "queue-row", "decisions": "decisions" }
     },
     "design-consult": {
+      "title": "Design consult session",
       "goal": "Settle one design question with the council and Fable before any plan is written.",
       "steps": [{ "activity": "epic", "part": "Design consult", "from": 1, "to": 4 }],
       "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Size the work by a prototype."],
@@ -20,6 +22,7 @@
       "slots": { "queue-row": "queue-row", "decisions": "decisions" }
     },
     "spec-and-plan": {
+      "title": "Spec and plan session",
       "goal": "Write every contract the story creates or revises and the plan's ledger beside them, through one review of at most two rounds.",
       "steps": [{ "activity": "plan-authoring", "part": null, "from": 1, "to": 5 }],
       "doNot": ["Write code.", "Write a test before the approval; a fold names its scenario instead.", "Copy the tree.", "Run a trial suite.", "Size a file in the plan."],
@@ -29,6 +32,7 @@
       "slots": { "queue-row": "queue-row", "decisions": "decisions" }
     },
     "waiting-on-approval": {
+      "title": "Waiting on approval",
       "goal": "Show the plan's essence and, on the maintainer's yes, record the approval.",
       "steps": [{ "activity": "plan-authoring", "part": null, "from": 6, "to": 6 }],
       "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Record an approval the maintainer has not given in the chat."],
@@ -38,6 +42,7 @@
       "slots": { "plan": "plan" }
     },
     "tests": {
+      "title": "Tests session",
       "goal": "Write only the plan's tests, each failing for the reason its scenario or acceptance bullet states.",
       "steps": [{ "activity": "plan-execution", "part": null, "from": 1, "to": 4 }],
       "doNot": ["Write code.", "Write a prototype.", "Write a test that passes before its code exists."],
@@ -47,6 +52,7 @@
       "slots": { "plan": "plan" }
     },
     "code": {
+      "title": "Code session",
       "goal": "Write the plan's code until its tests and run-gates --pre-review pass.",
       "steps": [{ "activity": "plan-execution", "part": null, "from": 1, "to": 4 }],
       "doNot": ["Change a test except back to what its scenario states.", "Write code no approved row or amendment entry covers.", "Commit."],
@@ -56,6 +62,7 @@
       "slots": { "plan": "plan" }
     },
     "diff-review": {
+      "title": "Diff review session",
       "goal": "Review the story's staged diff, run the final gates and the release where the story ships one, then commit and clean up.",
       "steps": [{ "activity": "plan-execution", "part": null, "from": 5, "to": 8 }],
       "doNot": ["Commit before the review is clean.", "Fold a finding without asking the member who raised it.", "Leave a committable output unstaged before the review."],
@@ -65,6 +72,7 @@
       "slots": { "plan": "plan" }
     },
     "split-modules": {
+      "title": "Split modules session",
       "goal": "Write the split's module list as a plan with no code.",
       "steps": [{ "activity": "plan-execution", "part": "Split", "from": 1, "to": 2 }],
       "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Move a file before the approval."],
@@ -74,6 +82,7 @@
       "slots": { "queue-row": "queue-row", "decisions": "decisions" }
     },
     "split-edits": {
+      "title": "Split edits session",
       "goal": "Move the existing code and its cases into the modules the approved list names, then review, release and clean up.",
       "steps": [{ "activity": "plan-execution", "part": "Split", "from": 3, "to": 4 }],
       "doNot": ["Add new logic.", "Add a new case.", "Move a file the approved list does not name."],
@@ -83,6 +92,7 @@
       "slots": { "plan": "plan" }
     },
     "pause": {
+      "title": "Paused session",
       "goal": "The session waits: the work stops here until the maintainer names the next stage.",
       "steps": [],
       "doNot": ["Write code.", "Write a test.", "Start a stage the maintainer has not named."],
@@ -92,6 +102,7 @@
       "slots": {}
     },
     "empty-queue": {
+      "title": "Empty queue",
       "goal": "The session waits: no work is open until the maintainer opens some.",
       "steps": [],
       "doNot": ["Write code.", "Write a test.", "Open work the maintainer has not asked for."],

@@ -17,6 +17,9 @@ import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from '
 import { loadConfig } from './orchestration-config.mjs';
 import { HOOK_FILE_REL, HOOKS_DIR, buildHookSettingsEntry, isHookWired, mergeHookEntry, writeGateHook } from './gate-hook.mjs';
 import { STATE_BLOCK_HOOK_FILE_REL, buildStopHookEntry, isStopHookWired, mergeStopEntry, writeStateBlockHook } from './state-block-hook.mjs';
+import { buildStageGuardEntry, isStageGuardWired, writeStageGuard } from './stage-write-guard/index.mjs';
+import { mergeHookEntryInto } from './hook-writer/index.mjs';
+import { STAGE_GUARD_HOOK } from '../references/scripts/shared/index.mjs';
 import { writeMcp } from './mcp.mjs';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, allowRulesFor, buildServerEntry } from './mcp-registration.mjs';
 import { AGENTS_DIR, agentsAccepted, kitAgentNames, writeCheapAgents } from './cheap-agents.mjs';
@@ -35,7 +38,10 @@ const SKILL_KIT = 'jev-skill.not-current';
 const SKILL_VARIANTS = ['jev-skill', SKILL_KIT];
 const VELOCITY_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier'];
 const [GATE_KIT, STOP, STOP_KIT] = ['gate-hook.not-current', 'state-block', 'state-block.not-current'];
-const [HOOK_VARIANTS, STOP_VARIANTS, KIT_HOOKS] = [['gate-hook', GATE_KIT], [STOP, STOP_KIT], [GATE_KIT, STOP_KIT]];
+const [GUARD, GUARD_KIT] = ['stage-guard', 'stage-guard.not-current'];
+const [HOOK_VARIANTS, STOP_VARIANTS, GUARD_VARIANTS, KIT_HOOKS] = [['gate-hook', GATE_KIT], [STOP, STOP_KIT], [GUARD, GUARD_KIT], [GATE_KIT, STOP_KIT, GUARD_KIT]];
+const KIT_HOOK_WIRED = Object.freeze({ [GATE_KIT]: isHookWired, [STOP_KIT]: isStopHookWired, [GUARD_KIT]: isStageGuardWired });
+const PRE_TOOL_USE = 'PreToolUse';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
 const AGENTS_KIT = 'agents.not-current';
 const AGENT_VARIANTS = ['agents', 'executor-vehicle', AGENTS_KIT];
@@ -43,7 +49,7 @@ const GIT_VARIANTS = ['enforcement', 'commit-guard', 'hook-checks'];
 const WORKTREES = 'worktrees-dir';
 const ATTRIBUTION = 'attribution';
 const FOOTPRINT = 'footprint-global';
-const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, ...STOP_VARIANTS, ...MCP_VARIANTS, ...AGENT_VARIANTS, ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES, ATTRIBUTION, FOOTPRINT];
+const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, ...STOP_VARIANTS, ...GUARD_VARIANTS, ...MCP_VARIANTS, ...AGENT_VARIANTS, ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES, ATTRIBUTION, FOOTPRINT];
 const HOOK_KEYS = ['hooks.PreToolUse', 'hooks.Stop'];
 const CREDENTIALS = 'sandbox.credentials.envVars';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -171,7 +177,9 @@ const unmaskedLstat = (facts) => (path, ...args) => {
   if (stat?.isCharacterDevice() && SETTINGS_FILES.some((rel) => path === join(facts.root, rel))) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
   return stat;
 };
-const kitHookWired = (variant, facts) => SETTINGS_FILES.some((rel) => (variant === GATE_KIT ? isHookWired : isStopHookWired)(readSettingsFile(join(facts.root, rel), { lstat: unmaskedLstat(facts), cwd: facts.root }).data));
+const kitHookWired = (variant, facts) => SETTINGS_FILES.some((rel) => KIT_HOOK_WIRED[variant](readSettingsFile(join(facts.root, rel), { lstat: unmaskedLstat(facts), cwd: facts.root }).data));
+const hookFileOf = (variant) => HOOK_VARIANTS.includes(variant) ? HOOK_FILE_REL
+  : STOP_VARIANTS.includes(variant) ? STATE_BLOCK_HOOK_FILE_REL : GUARD_VARIANTS.includes(variant) ? STAGE_GUARD_HOOK : null;
 const skillIo = (deps) => ({ lstat: deps.lstat ?? lstatSync, readdir: deps.readdir ?? readdirSync, readFile: deps.readFile ?? readFileSync, pins: deps.pins });
 
 export const scopeOf = (variant, facts, deps = {}) => {
@@ -207,6 +215,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
   }
   if (variant === 'gate-hook') set('hooks.PreToolUse', [buildHookSettingsEntry()]);
   else if (variant === STOP) set('hooks.Stop', [buildStopHookEntry()]);
+  else if (variant === GUARD) set(`hooks.${PRE_TOOL_USE}`, [buildStageGuardEntry()]);
   else if (MCP_VARIANTS.includes(variant)) {
     set(`${SERVERS_KEY}.${SERVER_NAME}`, [buildServerEntry(join(facts.toolsDir, 'mcp-server.mjs'))]);
     set(ENABLED_KEY, [SERVER_NAME]);
@@ -217,11 +226,12 @@ export const scopeOf = (variant, facts, deps = {}) => {
   // The kit skill variant's scope holds only while the check's own judgement accepts the component, never read from the plan.
   const targets = variant !== SKILL_KIT || skillAccepted(judged.map((target) => ({ ...target, ...skillState(target, skillIo(deps)) }))) ? judged : [];
   const accepted = !KIT_HOOKS.includes(variant) || kitHookWired(variant, facts);
-  const filePaths = !accepted ? [] : HOOK_VARIANTS.includes(variant) ? [join(facts.root, HOOK_FILE_REL)] : STOP_VARIANTS.includes(variant) ? [join(facts.root, STATE_BLOCK_HOOK_FILE_REL)] : [];
+  const hookFile = accepted ? hookFileOf(variant) : null;
+  const filePaths = hookFile === null ? [] : [join(facts.root, hookFile)];
   const directories = !accepted || SKILL_VARIANTS.includes(variant) || variant === FOOTPRINT ? [] : [join(facts.root, CLAUDE_DIR)];
   const globalFile = variant === FOOTPRINT ? footprintPlan(facts, deps)?.source : undefined;
   if (globalFile) filePaths.push(globalFile);
-  if (accepted && (HOOK_VARIANTS.includes(variant) || STOP_VARIANTS.includes(variant))) directories.push(join(facts.root, HOOKS_DIR));
+  if (hookFile !== null) directories.push(join(facts.root, HOOKS_DIR));
   if (AGENT_VARIANTS.includes(variant)) directories.push(join(facts.root, AGENTS_DIR));
   const kitNames = variant === AGENTS_KIT ? kitAgentNames(facts.root) : [];
   if (kitNames.length && agentsAccepted(facts.root, kitNames)) filePaths.push(...kitNames.map((name) => join(facts.root, AGENTS_DIR, name)));
@@ -265,7 +275,7 @@ const regularBytes = (path) => lstatSync(path, { throwIfNoEntry: false })?.isFil
 const halted = (lines) => Object.assign(new Error(lines.join('\n')), { code: 'CHECK_HALTED', lines });
 const maskedFiles = (variant, facts) => {
   const paths = VELOCITY_VARIANTS.includes(variant) || variant === 'autonomy-render' || variant === 'gate-hook'
-    || variant === STOP || variant === WORKTREES || variant === ATTRIBUTION ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
+    || variant === STOP || variant === GUARD || variant === WORKTREES || variant === ATTRIBUTION ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
   return paths.flatMap((path) => lstatSync(join(facts.root, path), { throwIfNoEntry: false })?.isCharacterDevice()
     ? [`masked: ${path}`] : []);
 };
@@ -310,6 +320,10 @@ export const plannedChange = (variant, facts, deps = {}) => {
       const plan = (deps.writeStateBlockHook ?? writeStateBlockHook)({ cwd: facts.root, dryRun: true }, writerDeps);
       if (plan.mergePlanned) addFile(SETTINGS_FILE, plan.projectSettings.data, mergeStopEntry(plan.projectSettings.data));
       if (['create', 'replace'].includes(plan.placement)) writes.push({ path: join(facts.root, STATE_BLOCK_HOOK_FILE_REL), bytes: plan.bundleContent });
+    } else if (GUARD_VARIANTS.includes(variant)) {
+      const plan = (deps.writeStageGuard ?? writeStageGuard)({ cwd: facts.root, dryRun: true }, writerDeps);
+      if (plan.mergePlanned) addFile(SETTINGS_FILE, plan.projectSettings.data, mergeHookEntryInto(plan.projectSettings.data, PRE_TOOL_USE, buildStageGuardEntry()));
+      if (plan.placePlanned) writes.push({ path: join(facts.root, STAGE_GUARD_HOOK), bytes: plan.bundleContent });
     } else if (MCP_VARIANTS.includes(variant)) {
       const result = writeMcp({ cwd: facts.root, dryRun: true, replace: variant === 'mcp-channel.differing' }, writerDeps);
       const { plan, registration } = result;

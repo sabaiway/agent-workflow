@@ -56,6 +56,7 @@ export const HOOKS_DIR = `${CLAUDE_DIR}/hooks`;
 export const SKILLS_DIR = `${CLAUDE_DIR}/skills`;
 export const GATE_HOOK = `${HOOKS_DIR}/agent-workflow-gates.mjs`;
 export const STOP_HOOK = `${HOOKS_DIR}/state-block-guard.mjs`;
+export const STAGE_GUARD_HOOK = `${HOOKS_DIR}/stage-write-guard.mjs`;
 
 export const GIT_CONFIG = `${GIT_DIR}/config`;
 export const GIT_HOOKS = `${GIT_DIR}/hooks`;

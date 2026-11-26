@@ -87,9 +87,10 @@ not a configuration you can set today.
 **The writer — `tools/state-block-hook.mjs`.** The `state-block` advisor item is a harness item:
 the agent applies it on the chat yes after the danger check, and `init`, run in a console from the
 project's folder, applies it on the terminal y as the route the user may take instead. Without
-`--apply` the writer is a preview that writes nothing; `--apply` writes. It imports the gate-approval
-writer's symlink, target and settings-shape checks from `tools/gate-hook.mjs`; its unsafe-mode and
-stamp refusals use that writer's error codes:
+`--apply` the writer is a preview that writes nothing; `--apply` writes. It runs on the kit's hook writer
+`tools/hook-writer/index.mjs`, which imports the gate-approval writer's symlink, target and
+settings-shape checks from `tools/gate-hook.mjs`; its unsafe-mode and stamp refusals use that
+writer's error codes:
 
 - the runtime goes to `.claude/hooks/state-block-guard.mjs` — created when absent, kept when
   byte-equal, replaced in place when it differs (the preview says so, and the check's result names

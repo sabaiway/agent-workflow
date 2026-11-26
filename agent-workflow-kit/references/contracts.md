@@ -100,8 +100,8 @@ files `docs/ai/rules/<theme>.md` and the kit agent files (the names the kit bund
 `.claude/agents/` — `author.md`, `changelog-skeleton.md`, `executor.md`,
 `gate-triage.md`, `mechanical-sweep.md`, `review-lens.md` — and each configured
 `review-lens-<model>-<effort>.md`) and, within a hook you wired, the kit hook files
-`.claude/hooks/agent-workflow-gates.mjs` and `.claude/hooks/state-block-guard.mjs` are written over
-by the next upgrade with no question and no copy kept.
+`.claude/hooks/agent-workflow-gates.mjs`, `.claude/hooks/state-block-guard.mjs` and
+`.claude/hooks/stage-write-guard.mjs` are written over by the next upgrade with no question and no copy kept.
 Also the kit's: the vendor skill copy the kit installs into the three agent skill roots
 when it matches a pin the kit shipped, written with no question beside a copy at a kit pin;
 a copy matching none is the user's, left and named. Also the kit's: the kit block of `AGENTS.md`, between its two

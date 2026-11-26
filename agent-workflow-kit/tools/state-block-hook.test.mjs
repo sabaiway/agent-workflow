@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { existsSync, lstatSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { fileLine } from './distribution-files/index.mjs';
+import {
+  LOCAL, SETTINGS, STAMP, makeHookProject, plantLink, put, snapshot,
+} from './hook-writer/hook-harness.test.mjs';
 
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
 const need = (name) => {
@@ -16,9 +15,6 @@ const need = (name) => {
   return leaf[name];
 };
 const HOOK = '.claude/hooks/state-block-guard.mjs';
-const SETTINGS = '.claude/settings.json';
-const LOCAL = '.claude/settings.local.json';
-const STAMP = 'docs/ai/.workflow-version';
 const BUNDLE_PATH = fileURLToPath(new URL('../references/hooks/state-block-guard.mjs', import.meta.url));
 const COMMAND = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"';
 const ENTRY = { hooks: [{ type: 'command', command: COMMAND, timeout: 10 }] };
@@ -30,35 +26,7 @@ const FOREIGN_STOP = { matcher: 'foreign', hooks: [{ type: 'command', command: '
 const PERMISSIONS = { allow: ['Read'], defaultMode: 'default' };
 const BEFORE = { hooks: { PreToolUse: [FOREIGN_PRE], Stop: [FOREIGN_STOP] }, permissions: PERMISSIONS };
 
-const put = (root, rel, contents) => {
-  const path = join(root, rel);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, contents);
-};
-const makeProject = (t, { settings, local, hook, stamp = EXPECTED_WORKFLOW_VERSION } = {}) => {
-  const root = mkdtempSync(join(tmpdir(), 'state-block-writer-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  put(root, STAMP, `${stamp}\n`);
-  if (settings !== undefined) put(root, SETTINGS, `${JSON.stringify(settings, null, 2)}\n`);
-  if (local !== undefined) put(root, LOCAL, `${JSON.stringify(local, null, 2)}\n`);
-  if (hook !== undefined) put(root, HOOK, hook);
-  return root;
-};
-const snapshot = (root) => readdirSync(root).sort().map((name) => {
-  const path = join(root, name);
-  const stat = lstatSync(path);
-  const entry = { name, mode: stat.mode, inode: stat.ino };
-  if (stat.isSymbolicLink()) return { ...entry, link: readlinkSync(path) };
-  if (stat.isDirectory()) return { ...entry, children: snapshot(path) };
-  return { ...entry, bytes: readFileSync(path) };
-});
-const plantLink = (root, rel, directory = false) => {
-  const backing = join(root, 'backing');
-  if (directory) mkdirSync(backing);
-  else writeFileSync(backing, 'untouched\n');
-  mkdirSync(dirname(join(root, rel)), { recursive: true });
-  symlinkSync(backing, join(root, rel));
-};
+const makeProject = (t, options = {}) => makeHookProject(t, { prefix: 'state-block-writer-', hookRel: HOOK, ...options });
 const invoke = (main, argv, deps = {}) => {
   const stdout = [];
   const stderr = [];
@@ -317,14 +285,18 @@ describe('spec:init-project/S28 the state-block writer by proof on a temp projec
     makeProject(t);
     need('writeStateBlockHook');
     const source = readFileSync(new URL('./state-block-hook.mjs', import.meta.url), 'utf8');
-    const imports = [...source.matchAll(/import\s*\{([^{}]*)\}\s*from\s*['"]\.\/gate-hook\.mjs['"]/gu)];
+    const doorSource = readFileSync(new URL('./hook-writer/index.mjs', import.meta.url), 'utf8');
+    assert.match(source, /from\s*['"]\.\/hook-writer\/index\.mjs['"]/u, 'state-block-hook.mjs imports the hook writer door');
+    const imports = [...doorSource.matchAll(/import\s*\{([^{}]*)\}\s*from\s*['"]\.\.\/gate-hook\.mjs['"]/gu)];
     assert.equal(imports.length, 1);
     const names = imports[0][1].split(',').map((name) => name.trim()).filter(Boolean);
     for (const name of ['fsDeps', 'assertDirSafe', 'assertSettingsWritable', 'planTarget', 'assertHooksShape', 'readStamp', 'formatJson', 'writeHookFile']) {
-      assert.ok(names.includes(name), `${name} must be imported by name from ./gate-hook.mjs`);
+      assert.ok(names.includes(name), `${name} must be imported by name from ../gate-hook.mjs`);
     }
-    for (const forbidden of ['lstat', 'isSymbolicLink', 'must be an array', 'must be a JSON object']) {
-      assert.equal(source.includes(forbidden), false, forbidden);
+    for (const text of [source, doorSource]) {
+      for (const forbidden of ['lstat', 'isSymbolicLink', 'must be an array', 'must be a JSON object']) {
+        assert.equal(text.includes(forbidden), false, forbidden);
+      }
     }
   });
 
@@ -332,9 +304,13 @@ describe('spec:init-project/S28 the state-block writer by proof on a temp projec
     makeProject(t);
     need('writeStateBlockHook');
     const source = readFileSync(new URL('./state-block-hook.mjs', import.meta.url), 'utf8');
-    const fromIndex = /^import \{[^}]*\bfileLine\b[^}]*\} from '\.\/distribution-files\/index\.mjs';$/mu;
-    assert.ok(fromIndex.test(source), 'state-block-hook.mjs imports fileLine from ./distribution-files/index.mjs');
-    assert.equal(/replaced? with the bundle/u.test(source), false, 'no line says replace with the bundle');
+    const doorSource = readFileSync(new URL('./hook-writer/index.mjs', import.meta.url), 'utf8');
+    assert.match(source, /from\s*['"]\.\/hook-writer\/index\.mjs['"]/u, 'state-block-hook.mjs imports the hook writer door');
+    const fromIndex = /^import \{[^}]*\bfileLine\b[^}]*\} from '\.\.\/distribution-files\/index\.mjs';$/mu;
+    assert.ok(fromIndex.test(doorSource), 'hook-writer/index.mjs imports fileLine from ../distribution-files/index.mjs');
+    for (const text of [source, doorSource]) {
+      assert.equal(/replaced? with the bundle/u.test(text), false, 'no line says replace with the bundle');
+    }
     for (const dryRun of [true, false]) {
       const tail = `${dryRun ? 'would be written' : 'written'} with that body${OWN_HOOK}`;
       assert.equal(fileLine({ rel: HOOK, state: 'hook' }, dryRun ? undefined : 'written', dryRun), `${HOOK}: differs from the body the kit writes for it — ${tail}`);

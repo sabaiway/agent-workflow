@@ -193,8 +193,12 @@ Receipt:
   name empty-report) or the report IS on disk and the terminal receipt was not completed (the absorb
   reads it, report-if-present). The post-report lane never claims the reservation still stands,
   because after that point its fate is no longer something this run observed. Every lane names the
-  tree as partial/dirtied rather than untouched. A nonce-LESS invocation is byte-unchanged: no
-  reservation, no receipt, no artifact, and it needs no node.
+  tree as partial/dirtied rather than untouched. A nonced run also refuses pre-spend, reserving
+  nothing, unless its contract file carries exactly one top-level aw-plan-approval block of exactly
+  plan, approval and check whose check (the kit's tools/plan-approval/cli.mjs check <plan> --digest
+  <approval>) exits 0, so a nonced run never starts unless the approval record matches the block's own plan and approval; the kit's
+  tools/stage-render/cli.mjs --dispatch <plan> prints that block. A nonce-LESS invocation is
+  byte-unchanged: no reservation, no receipt, no artifact, and it needs no node.
 
 Notes:
   nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run
@@ -513,7 +517,7 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="6.1.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="7.0.0"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.

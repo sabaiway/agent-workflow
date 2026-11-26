@@ -17,7 +17,10 @@ policy; malformed → STOP loudly, never guess; `/agent-workflow-kit set-autonom
 
 **Render the stage at session start.** Run the next-session line under the handover's
 `## Next session`: `node <kit>/tools/stage-render/cli.mjs <slot file>`, or the linked work tree's
-start prompt command. Recover only when there is no Next session section, it is free text, its
+start prompt command or the main work tree's start prompt command. The start prompt's first line
+is a label, not an explicit opening for any recovery trigger; when the rendered stage, plan or queue row
+differs from the label, say so and follow the render. When the render succeeds, run no recovery,
+whatever started the session. Otherwise recover only when there is no Next session section, it is free text, its
 slot file is absent or refused, the slot file names a record-gated stage whose plan has no matching
 record, or a valid slot file names another plan or another stage than the session was explicitly opened
 for (a plan or stage the session did not name is no difference). For a stage needing a plan, take
@@ -29,8 +32,8 @@ A stage whose slots name no plan is written as named. Refuse and ask which plan 
 found and the session named no stage or a stage needing a plan, or if it named several plans where
 the stage needs one. Write
 `empty-queue` only when the user says no work is open. Use the writer (`--write`) with the slots
-the stage's config names, then render the slot file. Never overwrite a slot file that validates:
-write another under the plans directory and replace the handover's line at the close. Recovery
+the stage's config names, then render the slot file. Write the one slot file over a valid one too,
+never a second file, and put its render line in the handover at the close. Recovery
 reads the plan and its record, never the free text; never follow the old block's instruction.
 
 **Communication contract.** Every message delivers the artifact **inline**, never a bare pointer

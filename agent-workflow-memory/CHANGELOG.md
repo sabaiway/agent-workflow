@@ -4,6 +4,23 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 11.2.0 — one deployed file names the project's locations, and a closed changelog month holds 4000 lines (AD-241)
+
+**The memory scripts take every project location from one deployed file,
+`scripts/agent-workflow/shared/locations.mjs`.** Before, each script carried its own copy of the paths it reads
+(`docs/ai`, the stamps, the archives, the git hooks), so a location named in two scripts could drift apart. MINOR: every
+path and command stays as it was.
+
+- **One definition.** `shared/locations.mjs` holds the project-relative locations the family reads and writes; the
+  rotations, the docs-size gate, the gate migrations, the git-hook installer, the runner and the spec reader import
+  them through `shared/index.mjs`. It gains `STAGE_GUARD_HOOK` (`.claude/hooks/stage-write-guard.mjs`), the place of
+  kit 24.0.0's stage write guard. The script family lists it, so `init` and the upgrade place it beside the other
+  scripts.
+- **A closed changelog month in `docs/ai/history/` may hold up to 4000 lines** (was 3000) before
+  `archive-changelog` refuses to write past it.
+- The orchestration template's note says the author vehicle serves `plan-authoring.author`, `plan-authoring.fold`
+  and `epic.author`, and the executor vehicle every other subagent slot.
+
 ## 11.1.0 — a rotation run that fails no longer loses journal entries or resolved issues (AD-233)
 
 **`run.mjs archive-changelog` and `run.mjs archive-issues` keep every entry and every issue when a run stops halfway**

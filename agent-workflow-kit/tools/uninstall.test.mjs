@@ -360,6 +360,18 @@ describe('buildPlan — project deploy axis', () => {
     assert.equal(find(plan.items, 'gate-hook').class, REPORT_ONLY);
   });
 
+  it('stage guard: a wired entry in either settings file is reported with its hand edit, since it keeps refusing writes after the kit is gone', () => {
+    const wired = JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Write|Edit|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/stage-write-guard.mjs"' }] }] } });
+    for (const file of ['.claude/settings.json', '.claude/settings.local.json']) {
+      const plan = buildPlan({ family: [], project, projectDir: dir }, projectFs({ files: { [join(dir, file)]: wired } }));
+      const seam = plan.items.find((i) => i.surface === 'settings' && i.path === join(dir, file));
+      assert.equal(seam?.class, REPORT_ONLY, file);
+      assert.match(seam.reason, /stage write guard \(\.claude\/hooks\/stage-write-guard\.mjs\)/, file);
+      assert.match(seam.reason, /keeps refusing/, file);
+      assert.match(seam.hand, /remove the PreToolUse entry whose command runs \.claude\/hooks\/stage-write-guard\.mjs/, file);
+    }
+  });
+
   // ── the MCP registration's two seams (mode: mcp) ────────────────────────────
   // Both are REPORT_ONLY for the same reason the settings seam always was: `.mcp.json` may declare
   // servers this kit never placed, and the settings file may hold the user's own rules. The entry is

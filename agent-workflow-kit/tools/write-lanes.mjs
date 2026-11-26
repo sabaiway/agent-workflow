@@ -1,5 +1,5 @@
 import { join, posix, resolve } from 'node:path';
-import { AGENTS_DIR, GATE_HOOK, GIT_CONFIG, GIT_HOOKS, HOOKS_DIR, MCP_FILE, PRE_COMMIT, SETTINGS, SETTINGS_LOCAL, SKILLS_DIR, STOP_HOOK } from '../references/scripts/shared/index.mjs';
+import { AGENTS_DIR, GATE_HOOK, GIT_CONFIG, GIT_HOOKS, HOOKS_DIR, MCP_FILE, PRE_COMMIT, SETTINGS, SETTINGS_LOCAL, SKILLS_DIR, STAGE_GUARD_HOOK, STOP_HOOK } from '../references/scripts/shared/index.mjs';
 import { dirCovers } from './declared-paths.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
@@ -44,6 +44,8 @@ export const VARIANT_LANES = Object.freeze({
   'read-lane': LANE_CHAT,
   'state-block': LANE_HARNESS,
   'state-block.not-current': LANE_KIT,
+  'stage-guard': LANE_HARNESS,
+  'stage-guard.not-current': LANE_KIT,
   'mcp-channel': LANE_HARNESS,
   'mcp-channel.differing': LANE_HARNESS,
   agents: LANE_HARNESS,
@@ -96,6 +98,7 @@ const SETTINGS_WRITES = [SETTINGS_PATH];
 const LOCAL_SETTINGS_WRITES = [join(SETTINGS_LOCAL)];
 const GATE_HOOK_FILE = [join(GATE_HOOK)];
 const STOP_HOOK_FILE = [join(STOP_HOOK)];
+const STAGE_GUARD_FILE = [join(STAGE_GUARD_HOOK)];
 const MCP_WRITES = [MCP_FILE, ...SETTINGS_WRITES];
 const AGENT_WRITES = [join(AGENTS_DIR)];
 
@@ -157,6 +160,8 @@ const FORMS = Object.freeze({
   'gate-hook.not-current': hookForm('gate-hook.mjs', GATE_HOOK_FILE),
   'state-block': hookForm('state-block-hook.mjs', [...STOP_HOOK_FILE, ...SETTINGS_WRITES]),
   'state-block.not-current': hookForm('state-block-hook.mjs', STOP_HOOK_FILE),
+  'stage-guard': hookForm('stage-write-guard/cli.mjs', [...STAGE_GUARD_FILE, ...SETTINGS_WRITES]),
+  'stage-guard.not-current': hookForm('stage-write-guard/cli.mjs', STAGE_GUARD_FILE),
   'mcp-channel': createForm('mcp.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], MCP_WRITES),
   'mcp-channel.differing': createForm('mcp.mjs',
     ['--replace', '--cwd', '<root>'], ['--replace', '--apply', '--cwd', '<root>'], MCP_WRITES),

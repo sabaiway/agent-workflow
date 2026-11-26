@@ -33,6 +33,8 @@
 | read-lane | chat | gate-hook.mjs |
 | state-block | harness | state-block-hook.mjs |
 | state-block.not-current | kit | state-block-hook.mjs |
+| stage-guard | harness | stage-write-guard/cli.mjs |
+| stage-guard.not-current | kit | stage-write-guard/cli.mjs |
 | mcp-channel | harness | mcp.mjs |
 | mcp-channel.differing | harness | mcp.mjs |
 | agents | harness | cheap-agents.mjs |

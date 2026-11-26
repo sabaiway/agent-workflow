@@ -16,11 +16,10 @@ const KIT = resolve(import.meta.dirname, '../..');
 const ENGINE = resolve(KIT, '../agent-workflow-engine');
 const SLOT = `${PLANS_REL}/next-session.json`;
 const PLAN = `${PLANS_REL}/guide.md`;
-const EPIC = 'docs/ai/epics/GUIDE.md';
 const NOTES = `${PLANS_REL}/notes.md`;
 const DATE = '2026-11-25';
 const VALUES = {
-  plan: PLAN, epic: EPIC, story: 'S1', 'queue-row': 'GUIDE-1', file: NOTES,
+  plan: PLAN, 'queue-row': 'GUIDE-1',
   decisions: [{ path: NOTES, heading: 'Decisions' }],
 };
 const SLOT_KINDS = Object.fromEntries(Object.keys(VALUES).map((kind) => [kind, kind]));
@@ -30,7 +29,6 @@ const makeRoot = (t) => {
   const root = makeTree('stage-render-door');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   write(root, PLAN, '# Guide\n');
-  write(root, EPIC, '# Epic: Guide\n');
   write(root, NOTES, '## Decisions\nKeep the scope.\n');
   return root;
 };
@@ -39,7 +37,7 @@ const withInjectedReads = (t, operation) => {
   const effects = [];
   const forbid = (name) => () => { effects.push(name); throw new Error(name); };
   for (const name of ['readFileSync', 'lstatSync', 'statSync', 'realpathSync', 'existsSync', 'readdirSync',
-    'writeFileSync', 'appendFileSync', 'mkdirSync', 'renameSync', 'rmSync']) t.mock.method(fs, name, forbid(name));
+    'writeFileSync', 'appendFileSync', 'mkdirSync', 'fsyncSync', 'fsync', 'renameSync', 'rename', 'rmSync']) t.mock.method(fs, name, forbid(name));
   for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) t.mock.method(childProcess, name, forbid(name));
   syncBuiltinESMExports();
   try {
@@ -71,8 +69,11 @@ it('spec:stage-render/S1 exports the read-only door and reuses the owning module
   for (const [name, owner] of [
     ['PLANS_REL', '../plan-files.mjs'], ['shellQuoteArg', '../repo-lex.mjs'],
     ['isSeedablePathToken', '../repo-lex.mjs'], ['extractSection', '../procedures.mjs'],
-    ['findMatch', '../plan-approval/index.mjs'],
   ]) assert.ok(imports.some(([, names, path]) => path === owner && new RegExp(`\\b${name}\\b`).test(names)), name);
+  assert.doesNotMatch(source, /(?:from\s*|import\s*\(?\s*)['"][^'"\n]*plan-approval\/[^'"\n]*['"]/u);
+  const cli = fs.readFileSync(new URL('./cli.mjs', import.meta.url), 'utf8');
+  assert.match(cli, /from\s*['"]\.\.\/plan-approval\/index\.mjs['"]/u);
+  assert.doesNotMatch(cli, /(?:from\s*|import\s*\(?\s*)['"][^'"\n]*plan-approval\/(?!index\.mjs['"])[^'"\n]*['"]/u);
   const effects = [];
   const isLoaderRead = (stack) => /node:internal\/modules\//.test(stack)
     && !stack.split('\n').some((frame) => frame.includes('file://') && !frame.includes(import.meta.url));
@@ -92,10 +93,13 @@ it('spec:stage-render/S1 exports the read-only door and reuses the owning module
   try {
     const door = await import(DOOR.href + '?effects');
     assert.deepEqual(Object.keys(door).sort(), [
-      'FIXED_LINES', 'NEXT_SESSION_HEADING', 'RECORD_GATED_STAGES', 'STAGES_REL', 'composeDispatchPart',
-      'composeRenderCommand', 'composeRenderLine', 'loadStages', 'renderStage', 'stepsOf', 'validateSlots',
+      'FIXED_LINES', 'GUARD_LINE', 'NEXT_SESSION_HEADING', 'RECORD_GATED_STAGES', 'SLOT_FILE_NAME', 'STAGES_REL',
+      'STAGE_RECORD_BASENAME', 'composeDispatchPart', 'composeRenderCommand', 'composeRenderLine', 'composeSlotText',
+      'composeStageRecord', 'composeStartPrompt', 'loadStages', 'renderStage', 'stepsOf', 'validateSlots',
     ]);
     assert.equal(door.NEXT_SESSION_HEADING, '## Next session');
+    assert.equal(door.STAGE_RECORD_BASENAME, 'agent-workflow-stage.json');
+    assert.equal(door.SLOT_FILE_NAME, 'next-session.json');
   } finally {
     t.mock.restoreAll();
     syncBuiltinESMExports();
@@ -173,7 +177,6 @@ describe('spec:stage-render/S11 validates the slot file and every declared kind'
     const { slots, check } = await validate(t);
     assert.deepEqual(check(slots), slots);
     assert.deepEqual(check({ ...slots, decisions: [] }), { ...slots, decisions: [] });
-    assert.deepEqual(check({ ...slots, file: PLANS_REL }), { ...slots, file: PLANS_REL });
     for (const [raw, name] of [
       [JSON.stringify(slots).replace('"schema":1', '"schema":1,"schema":1'), 'schema'],
       [Buffer.from([0xff, 0xfe]), 'next-session.json'],
@@ -181,6 +184,8 @@ describe('spec:stage-render/S11 validates the slot file and every declared kind'
     assert.throws(() => check(slots, `${PLANS_REL}/nested/next-session.json`), /next-session\.json/);
     assert.throws(() => check(slots, `${PLANS_REL}/next-session.txt`), /next-session\.txt/);
     assert.throws(() => check(slots, `${PLANS_REL}/not a slug.json`), /not a slug\.json/);
+    assert.throws(() => check(slots, `${PLANS_REL}/other-session.json`),
+      (error) => error.message.includes('other-session.json') && error.message.includes('next-session.json'));
   });
   it('names unknown, missing, mistyped and control-bearing fields', async (t) => {
     const { root, slots, check } = await validate(t);
@@ -194,10 +199,10 @@ describe('spec:stage-render/S11 validates the slot file and every declared kind'
     }
     for (const [patch, name] of [
       [{ extra: 'text' }, 'extra'], [{ schema: 2 }, 'schema'], [{ stage: 'unknown' }, 'unknown'],
-      [{ date: '2026-02-30' }, 'date'], [{ plan: NOTES + '.txt' }, 'plan'], [{ epic: PLAN }, 'epic'],
-      [{ story: 'S0' }, 'story'], [{ 'queue-row': 'lower-case' }, 'queue-row'], [{ file: 'missing.md' }, 'file'],
+      [{ date: '2026-02-30' }, 'date'], [{ plan: NOTES + '.txt' }, 'plan'],
+      [{ 'queue-row': 'lower-case' }, 'queue-row'],
       [{ decisions: 'free text' }, 'decisions'], [{ decisions: [{ path: NOTES, heading: 'Decisions', extra: true }] }, 'extra'],
-      [{ story: 'S1\u0001' }, 'story'], [{ decisions: [{ path: NOTES, heading: 'Decisions\n' }] }, 'heading'],
+      [{ 'queue-row': 'GUIDE-1\u0001' }, 'queue-row'], [{ decisions: [{ path: NOTES, heading: 'Decisions\n' }] }, 'heading'],
       [{ decisions: [{ path: NOTES, heading: 'Absent' }] }, 'Absent'],
     ]) assert.throws(() => check({ ...slots, ...patch }), new RegExp(name), JSON.stringify(patch));
     const gated = { schema: 1, stage: 'tests', date: DATE, plan: PLAN };
@@ -210,18 +215,27 @@ describe('spec:stage-render/S11 validates the slot file and every declared kind'
     t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
     write(outside, 'outside.md', '## Decisions\n');
     for (const file of [join(outside, 'outside.md'), `../${outside.split('/').at(-1)}/outside.md`]) {
-      assert.throws(() => check({ ...slots, file }), /file/);
+      assert.throws(() => check({ ...slots, decisions: [{ path: file, heading: 'Decisions' }] }), /decisions/);
     }
     const linked = `${PLANS_REL}/linked.md`;
     fs.symlinkSync(join(root, PLAN), join(root, linked));
     assert.throws(() => check({ ...slots, plan: linked }), /linked\.md|plan/);
     fs.symlinkSync(join(root, PLANS_REL), join(root, 'linked'));
-    assert.throws(() => check({ ...slots, file: 'linked/guide.md' }), /linked|file/);
-    check(slots);
-    const linkedSlot = `${PLANS_REL}/linked.json`;
-    fs.symlinkSync(join(root, SLOT), join(root, linkedSlot));
-    assert.throws(() => withInjectedReads(t, () => validateSlots({ root, slotFile: linkedSlot, table }, reads)), /linked\.json/);
+    assert.throws(() => check({ ...slots, decisions: [{ path: 'linked/notes.md', heading: 'Decisions' }] }), /linked|decisions/);
+    const realBody = `${PLANS_REL}/real-body.json`;
+    write(root, realBody, JSON.stringify(slots));
+    fs.unlinkSync(join(root, SLOT));
+    fs.symlinkSync(join(root, realBody), join(root, SLOT));
+    assert.throws(() => withInjectedReads(t, () => validateSlots({ root, slotFile: SLOT, table }, reads)), /next-session\.json/);
   });
+  for (const kind of ['epic', 'story', 'file']) {
+    it(`refuses ${kind} as a declared slot kind by name`, async () => {
+      const { loadStages } = await import(DOOR.href);
+      const table = JSON.parse(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+      table.stages.epic.slots[kind] = kind;
+      assert.throws(() => loadStages(JSON.stringify(table)), new RegExp(`slot "${kind}" has no slot kind \\("${kind}"\\)`));
+    });
+  }
 });
 
 describe('spec:stage-render/S12 composes the portable line and location-specific command', () => {
@@ -250,5 +264,105 @@ describe('spec:stage-render/S12 composes the portable line and location-specific
     assert.equal(relocated.composeRenderLine(SLOT), expected);
     assert.equal(isSeedablePathToken(kit), false);
     assert.equal(relocated.composeRenderCommand(SLOT), expected.replace('<kit>', shellQuoteArg(kit)));
+  });
+});
+
+it('spec:stage-render/S15 only stages outside RECORD_GATED_STAGES carry GUARD_LINE immediately after FIXED_LINES', async (t) => {
+  const { loadStages, renderStage, composeDispatchPart, FIXED_LINES, GUARD_LINE, RECORD_GATED_STAGES } = await import(DOOR.href);
+  assert.equal(typeof GUARD_LINE, 'string');
+  assert.ok(GUARD_LINE.trim());
+  const { composeEntry } = await import('../plan-approval/index.mjs');
+  const planDigest = 'a'.repeat(64);
+  const entry = composeEntry({ plan: PLAN, date: DATE, planDigest, contractsDigest: 'b'.repeat(64), contracts: [], essence: 'Keep the scope.' });
+  const match = { exitCode: 0, verdict: { accepted: true, identity: PLAN }, planDigest, malformedLines: [], recordPath: '/record', match: entry };
+  const table = loadStages(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+  const { dir, source } = resolveEngineDir({ env: { [ENGINE_ENV]: ENGINE } });
+  const canon = readEngineFragment(dir, { source, rel: PROCEDURES_FRAGMENT_REL });
+  for (const [stage, definition] of Object.entries(table.stages)) {
+    const slots = getSlots(stage, definition.slots);
+    const gated = RECORD_GATED_STAGES.includes(stage);
+    const rendered = withInjectedReads(t, () => renderStage({ slotFile: SLOT, slots, table, canon, match: gated ? match : null }, reads));
+    const lines = rendered.split('\n');
+    const fixedStart = lines.indexOf(FIXED_LINES[0]);
+    assert.ok(fixedStart >= 0, stage);
+    assert.deepEqual(lines.slice(fixedStart, fixedStart + FIXED_LINES.length), FIXED_LINES, stage);
+    if (gated) assert.ok(!lines.includes(GUARD_LINE), stage);
+    else assert.equal(lines[fixedStart + FIXED_LINES.length], GUARD_LINE, stage);
+  }
+  const dispatch = withInjectedReads(t, () => composeDispatchPart({ plan: PLAN, match }));
+  assert.equal(JSON.parse(dispatch.split('\n')[1]).approval, entry.approval);
+});
+
+describe('spec:stage-render/S16 the start prompt and the close', () => {
+  const stageCount = 11;
+  const labelStage = 'pause';
+  const controlByte = '\u0001';
+  const backtickRoot = 'kit`tick';
+  it('composes exactly two lines for every stage without reads or writes', async (t) => {
+    const { loadStages, composeStartPrompt, composeRenderCommand } = await import(DOOR.href);
+    const table = loadStages(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+    for (const [stage, { title, slots: kinds }] of Object.entries(table.stages)) {
+      const slots = getSlots(stage, kinds);
+      const label = Object.values(kinds).includes('plan') ? `${title} — plan ${PLAN}.`
+        : Object.values(kinds).includes('queue-row') ? `${title} — queue row ${VALUES['queue-row']}.` : `${title}.`;
+      const prompt = withInjectedReads(t, () => composeStartPrompt({ slotFile: SLOT, slots, table }));
+      assert.equal(prompt, `${label}\nTo start: run \`${composeRenderCommand(SLOT)}\` and follow the stage it prints.`, stage);
+      assert.ok(!prompt.includes(NOTES) && !prompt.includes(VALUES.decisions[0].heading), stage);
+      assert.doesNotMatch(prompt.split('\n')[1], /<kit>/, stage);
+    }
+  });
+  it('ships eleven distinct non-empty one-line titles without a final full stop', async () => {
+    const { loadStages } = await import(DOOR.href);
+    const table = loadStages(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+    const titles = Object.values(table.stages).map(({ title }) => title);
+    assert.equal(titles.length, stageCount);
+    for (const title of titles) {
+      assert.equal(typeof title, 'string');
+      assert.ok(title.trim());
+      assert.doesNotMatch(title, /[\r\n]|\.\s*$/);
+    }
+    assert.equal(new Set(titles).size, stageCount);
+  });
+  it('refuses a control byte in the slot file operand', async (t) => {
+    const { loadStages, composeStartPrompt } = await import(DOOR.href);
+    assert.equal(typeof composeStartPrompt, 'function');
+    const table = loadStages(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+    const slots = getSlots(labelStage, table.stages[labelStage].slots);
+    withInjectedReads(t, () => assert.throws(() => composeStartPrompt({ slotFile: SLOT + controlByte, slots, table })));
+  });
+  it('refuses a kit root with a backtick, naming that root', async (t) => {
+    const scratch = makeTree('stage-render-start-prompt');
+    t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+    const kit = join(scratch, backtickRoot);
+    fs.cpSync(KIT, kit, { recursive: true });
+    const { loadStages, composeStartPrompt } = await import(pathToFileURL(join(kit, 'tools/stage-render/index.mjs')).href);
+    assert.equal(typeof composeStartPrompt, 'function');
+    const table = loadStages(fs.readFileSync(join(kit, 'tools/stage-render/stages.json'), 'utf8'));
+    const slots = getSlots(labelStage, table.stages[labelStage].slots);
+    withInjectedReads(t, () => assert.throws(() => composeStartPrompt({ slotFile: SLOT, slots, table }),
+      (error) => error.message.includes(kit)));
+  });
+  it('every close shows the main tree the start prompt in one copyable block and the linked tree none', async (t) => {
+    const { loadStages, renderStage, RECORD_GATED_STAGES } = await import(DOOR.href);
+    const { composeEntry } = await import('../plan-approval/index.mjs');
+    const planDigest = 'a'.repeat(64);
+    const entry = composeEntry({ plan: PLAN, date: DATE, planDigest, contractsDigest: 'b'.repeat(64), contracts: [], essence: 'Keep the scope.' });
+    const match = { exitCode: 0, verdict: { accepted: true, identity: PLAN }, planDigest, malformedLines: [], recordPath: '/record', match: entry };
+    const table = loadStages(fs.readFileSync(new URL('./stages.json', import.meta.url), 'utf8'));
+    const { dir, source } = resolveEngineDir({ env: { [ENGINE_ENV]: ENGINE } });
+    const canon = readEngineFragment(dir, { source, rel: PROCEDURES_FRAGMENT_REL });
+    for (const [stage, definition] of Object.entries(table.stages)) {
+      const slots = getSlots(stage, definition.slots);
+      const gated = RECORD_GATED_STAGES.includes(stage);
+      const rendered = withInjectedReads(t, () => renderStage({ slotFile: SLOT, slots, table, canon, match: gated ? match : null }, reads));
+      const lines = rendered.split('\n');
+      assert.ok(lines.includes('Close:'), stage);
+      const close = lines.slice(lines.indexOf('Close:') + 1);
+      const main = close.filter((line) => !/linked work tree/i.test(line)).join('\n');
+      assert.match(main, /start prompt/i, stage);
+      assert.match(main, /copyable block/i, stage);
+      assert.ok(close.some((line) => /linked work tree/i.test(line) && /(?:show\w* no start prompt|(?:do not|never) show\w*[^.]*start prompt)/i.test(line)), stage);
+      assert.doesNotMatch(close.join('\n'), /that stage's rendering/i, stage);
+    }
   });
 });

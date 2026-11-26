@@ -137,17 +137,38 @@ lastUpdated: 2026-11-24
   ]) assert.notEqual(digestContract(changed), digest, changed);
 });
 
-it('spec:plan-approval/S3 exports only the pure door and imports the named owners without effects', async (t) => {
+it('spec:plan-approval/S3 the door only re-exports its named owners without effects or cycles', async (t) => {
   const door = new URL('./index.mjs', import.meta.url);
   const source = fs.readFileSync(door, 'utf8');
-  const imports = [...source.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g)];
+  const entries = fs.readFileSync(new URL('./entries.mjs', door), 'utf8');
+  const record = fs.readFileSync(new URL('./record.mjs', door), 'utf8');
+  const cli = fs.readFileSync(new URL('./cli.mjs', door), 'utf8');
+  const reexports = /export\s*\{([^}]+)\}\s*from\s*['"](\.\/(?:entries|record)\.mjs)['"]\s*;?/g;
+  const namedExports = [...source.matchAll(reexports)];
+  assert.equal(source.replace(reexports, '').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').trim(), '');
+  for (const name of ['readApproval', 'appendApproval', 'getLocalDate', 'OUTCOME_LINES']) {
+    assert.ok(namedExports.some(([, names, owner]) => owner === './record.mjs' && names.split(',').map((value) => value.trim()).includes(name)), name);
+  }
+  for (const name of ['readApproval', 'OUTCOME_LINES']) {
+    assert.ok([...cli.matchAll(/export\s*\{([^}]+)\}\s*(?:from\s*['"]\.\/record\.mjs['"])?/g)]
+      .some(([, names]) => names.split(',').map((value) => value.trim()).includes(name)), name);
+  }
+  const modules = { 'index.mjs': source, 'entries.mjs': entries, 'record.mjs': record, 'cli.mjs': cli };
+  const visit = (name, ancestors = []) => {
+    assert.ok(!ancestors.includes(name), [...ancestors, name].join(' -> '));
+    for (const [, target] of modules[name].matchAll(/(?:from\s*|import\s*\(?\s*)['"]\.\/([^'"]+)['"]/g)) {
+      if (Object.hasOwn(modules, target)) visit(target, [...ancestors, name]);
+    }
+  };
+  for (const name of Object.keys(modules)) visit(name);
+  const imports = [...entries.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g)];
   for (const [name, owner] of [
     ['parseLedger', '../plan-shape.mjs'],
     ['relateAmendments', '../plan-structure/index.mjs'],
     ['parseRobustTag', '../robustness-literals.mjs'],
     ['SPEC_SCHEMA', '../../references/scripts/spec-schema/index.mjs'],
   ]) assert.ok(imports.some(([, names, path]) => path === owner && new RegExp(`\\b${name}\\b`).test(names)), name);
-  assert.doesNotMatch(source, /\b(?:judgePlan|checkPlanStructure)\b/);
+  assert.doesNotMatch(entries, /\b(?:judgePlan|checkPlanStructure)\b/);
 
   const effects = [];
   const isLoaderRead = (stack) => /node:internal\/modules\//.test(stack)
@@ -175,7 +196,8 @@ it('spec:plan-approval/S3 exports only the pure door and imports the named owner
     for (const attempt of [1, 2]) {
       const exports = await import(`${door.href}?attempt=${attempt}`);
       assert.deepEqual(Object.keys(exports).sort(), [
-        'APPROVAL_RECORD_BASENAME', 'approvedParts', 'composeEntry', 'digestContract', 'digestPlan', 'findMatch', 'parseEntries',
+        'APPROVAL_RECORD_BASENAME', 'OUTCOME_LINES', 'appendApproval', 'approvedParts', 'composeEntry', 'digestContract',
+        'digestPlan', 'findMatch', 'getLocalDate', 'parseEntries', 'readApproval',
       ]);
       assert.equal(exports.APPROVAL_RECORD_BASENAME, 'agent-workflow-plan-approvals.jsonl');
     }
@@ -184,6 +206,11 @@ it('spec:plan-approval/S3 exports only the pure door and imports the named owner
     syncBuiltinESMExports();
   }
   assert.deepEqual(effects, []);
+  const recordExports = await import('./record.mjs');
+  const doorExports = await import(door.href);
+  const cliExports = await import('./cli.mjs');
+  for (const name of ['readApproval', 'appendApproval', 'getLocalDate', 'OUTCOME_LINES']) assert.equal(doorExports[name], recordExports[name], name);
+  for (const name of ['readApproval', 'OUTCOME_LINES']) assert.equal(cliExports[name], recordExports[name], name);
 });
 
 it('spec:plan-approval/S6 matches provision by plan digest alone and approval by both digests', async () => {

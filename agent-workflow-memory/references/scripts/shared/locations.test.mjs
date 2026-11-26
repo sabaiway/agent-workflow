@@ -13,7 +13,7 @@ const PINNED_NAMES = `
   DOCS_TREE PLANS QUEUE
   KIT_FOLDER LOCAL_HOOK SYNC_MIRRORS KIT_COMMAND
   AGENTS_SKILLS VSCODE_SETTINGS CURSOR_RULES
-  SETTINGS SETTINGS_LOCAL AGENTS_DIR HOOKS_DIR SKILLS_DIR GATE_HOOK STOP_HOOK
+  SETTINGS SETTINGS_LOCAL AGENTS_DIR HOOKS_DIR SKILLS_DIR GATE_HOOK STOP_HOOK STAGE_GUARD_HOOK
   GIT_CONFIG GIT_HOOKS GIT_EXCLUDE PRE_COMMIT
   INDEX HANDOVER AGENT_RULES CHANGELOG CHANGELOG_LEGACY KNOWN_ISSUES DECISIONS HISTORY ADR_STORE SPEC_STORE EPIC_STORE
   RULES WORKFLOW_STAMP MEMORY_STAMP GATES LANES ORCHESTRATION AUTONOMY VEHICLES WORKTREES SOURCE_SIZE SPEC_COVERAGE
@@ -21,7 +21,7 @@ const PINNED_NAMES = `
   RECENT CONDENSED_INDEX ISSUES_RESOLVED CHANGELOG_CARRY DECISIONS_ARCHIVE DECISIONS_ARCHIVE_EARLY
   ADR_LOG SPEC_STORE_INDEX EPIC_STORE_SEED RULES_LOCAL RULES_EFFECTIVE RULES_RECORD
 `.trim().split(/\s+/);
-const PINNED_NAME_COUNT = 93;
+const PINNED_NAME_COUNT = 94;
 
 const findLoadProblem = (source) => {
   const code = source.replace(/('(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*")|\/\/[^\r\n\u2028\u2029]*|\/\*[\s\S]*?\*\//gu,
@@ -53,6 +53,7 @@ describe('spec:locations/S1 the definition over the canon: the module\'s own exp
     const definition = await import(MODULE_URL.href);
     const names = Object.keys(definition);
     assert.deepEqual(findNameProblems(names), []);
+    assert.equal(definition.STAGE_GUARD_HOOK, '.claude/hooks/stage-write-guard.mjs');
     for (const name of names) {
       const problem = findCanonicalProblem(definition[name]);
       assert.equal(problem, null, `${name}: ${problem}`);
@@ -74,7 +75,7 @@ describe('spec:locations/S1 the definition over the canon: the module\'s own exp
     assert.equal(findLoadProblem(acceptedSource), null, acceptedSource);
   });
 
-  it('the pin has 93 unique names and the names judge reports a stray default and a missing DOCS', () => {
+  it('the pin has 94 unique names and the names judge reports a stray default and a missing DOCS', () => {
     assert.equal(PINNED_NAMES.length, PINNED_NAME_COUNT);
     assert.equal(new Set(PINNED_NAMES).size, PINNED_NAME_COUNT);
     assert.deepEqual(findNameProblems(PINNED_NAMES), []);

@@ -119,7 +119,7 @@ describe('spec:plan-approval/S4 record command', () => {
     assert.equal(entry.approval, canonicalFlowDigest({ planDigest: entry.planDigest, contractsDigest: entry.contractsDigest, essence }));
     assert.equal(dirname(recordPath(root)), gitDirectory);
     assert.ok(!fs.existsSync(join(root, 'docs/plans', BASENAME)));
-    assert.match(fs.readFileSync(CLI, 'utf8'), /import\s*\{[^}]*\bcreateStoreAppendLane\b[^}]*\}\s*from\s*['"]\.\.\/store-append\.mjs['"]/);
+    assert.match(fs.readFileSync(join(import.meta.dirname, 'record.mjs'), 'utf8'), /import\s*\{[^}]*\bcreateStoreAppendLane\b[^}]*\}\s*from\s*['"]\.\.\/store-append\.mjs['"]/);
   });
 
   it('does not write a repeated approval and plan on the same or another date', (t) => {
@@ -200,6 +200,26 @@ describe('spec:plan-approval/S4 record command', () => {
     const result = await invoke(main, root, recordArgs(PLAN, essenceFile(t)));
     expect(result, 2);
     assert.match(result.stdout + result.stderr, /git (?:dir|repository|work tree)/i);
+  });
+
+  it('reports a record the store cannot write at exit two and writes nothing', { skip: process.getuid?.() === 0 ? 'root writes a read-only directory' : false }, async (t) => {
+    const root = makeRepo(t);
+    const { main } = await import('./cli.mjs');
+    const gitDirectory = dirname(recordPath(root));
+    const args = recordArgs(PLAN, essenceFile(t));
+    fs.chmodSync(gitDirectory, 0o555);
+    const result = await invoke(main, root, args).finally(() => fs.chmodSync(gitDirectory, 0o755));
+    expect(result, 2, PLAN);
+    assert.ok(!fs.existsSync(recordPath(root)));
+  });
+
+  it('appendApproval refuses an entry that is not an approval record at exit two and writes nothing', async (t) => {
+    const root = makeRepo(t);
+    const { appendApproval } = await import('./index.mjs');
+    const result = appendApproval({ cwd: root, env: cleanEnv(), entry: { schema: 1, plan: PLAN } });
+    assert.equal(result.exitCode, 2, JSON.stringify(result));
+    assert.match(result.reason, /malformed/);
+    assert.ok(!fs.existsSync(recordPath(root)));
   });
 });
 
@@ -312,7 +332,7 @@ describe('spec:plan-approval/S10 IO seam', () => {
     const { main, OUTCOME_LINES } = await import('./cli.mjs');
     assert.ok(OUTCOME_LINES && Object.keys(OUTCOME_LINES).length > 0);
     const source = fs.readFileSync(CLI, 'utf8');
-    assert.match(source, /\bescapeForDisplay\b/);
+    assert.match(fs.readFileSync(join(import.meta.dirname, 'record.mjs'), 'utf8'), /\bescapeForDisplay\b/);
     assert.match(source, /\bisDirectRun\b/);
     assert.match(source, /\bOUTCOME_LINES\s*(?:\.|\[)/);
     assert.doesNotMatch(source, /\b(?:stdout|stderr)\s*\(\s*['"`][A-Za-z]/);
