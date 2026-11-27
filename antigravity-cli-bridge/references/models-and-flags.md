@@ -46,7 +46,7 @@ Environment:
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | the setting, else `Gemini 3.8 Flash (High)` | model display string, checked pre-spend against `agy models`; the environment value is a one-run model (a probe's one-off); set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
+| `AGY_MODEL` | the setting, else `posture.model` in the bridge's `capability.json` | model display string, checked pre-spend against `agy models`; the environment value is a one-run model (a probe's one-off); set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
 | `AGY_TIMEOUT` | `5m` | value passed to `--print-timeout` |
 | `AGY_HARD_TIMEOUT` | `= AGY_TIMEOUT` | hard `timeout(1)` wall-clock cap (a duration string) |
 | `AGY_MAX_PROMPT_BYTES` | `120000` | single-argv byte ceiling. `agy` takes the prompt as ONE `-p` argv; past `MAX_ARG_STRLEN` (~131072) `execve` fails with a cryptic `Argument list too long`. The wrapper measures the resolved `-`/`@file` prompt and fails loud over the ceiling. A huge **literal** `agy-run "<huge>"` fails at the wrapper's own `exec`, so route large prompts via `-`/`@file`. |
@@ -72,7 +72,7 @@ agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   #
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | the setting, else `Gemini 3.8 Flash (High)` | the host posture is the `AGY_MODEL` line of the bridge settings file; an environment value off it (an explicitly empty one included) is a one-off, refused pre-spend unless `AGY_PROBE=1` |
+| `AGY_MODEL` | the setting, else `posture.model` in the bridge's `capability.json` | the host posture is the `AGY_MODEL` line of the bridge settings file; an environment value off it (an explicitly empty one included) is a one-off, refused pre-spend unless `AGY_PROBE=1` |
 | `AGY_PROBE` | `0` | `1` is the one route to a one-off model AND lets `code` run without `--facts` (a probe never attests — its receipt is probe-marked) |
 | `AGY_REVIEW_MAX_TOTAL_BYTES` | `240000` | the ceiling on the SUM of all outgoing prompt bytes an oversized `code` review's chunked feed may send; checked BEFORE the first turn is spent |
 | `AGY_REVIEW_ALLOW_ADDDIR` | `0` | **RETIRED** — recognized so an existing settings line never warns as unknown, but it arms nothing. An oversized `code` review is a chunked feed with a per-part delivery proof; the `--add-dir` offload it armed could not be verified (headless `agy` auto-denies `read_file`) |
@@ -96,8 +96,8 @@ as "capability present".
 
 Set the **exact display string** from `agy models` as `AGY_MODEL` — in the bridge settings file for
 the host posture, or in the environment for one run (`--model` after `--` is refused). The built-in
-default is `Gemini 3.8 Flash (High)`. **`/agent-workflow-kit bridge-settings`** shows the models the
-installed `agy` offers, in its own order, and sets the host posture after checking it against that list.
+default is `posture.model` in the bridge's `capability.json`. **`/agent-workflow-kit bridge-settings`** shows the model in effect
+and the models the installed `agy` offers, in its own order, and sets the host posture after checking it against that list.
 
 Examples:
 

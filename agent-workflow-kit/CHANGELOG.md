@@ -4,6 +4,28 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 24.1.0 — agy runs Gemini 4 Hydrogen (High) by default, set in its manifest (AD-242)
+
+**After `/agent-workflow-kit upgrade` (or `init`), a host that sets no agy model runs `agy-run` and `agy-review` on
+`Gemini 4 Hydrogen (High)`.** Before, the bridge ran `Gemini 3.8 Flash (High)`. The agy bridge goes to 8.1.0, and your
+next `init` or upgrade refreshes it where you placed it.
+
+- **A model you set in the bridge settings file still wins.** An `AGY_MODEL` in the environment that differs from the
+  host posture is a one-off: `agy-run` runs it, and `agy-review` refuses it before anything is spent unless
+  `AGY_PROBE=1`; if you exported `AGY_MODEL=Gemini 3.8 Flash (High)` with no settings line, every `agy-review` that is
+  not a probe is now refused. Keep that model with
+  `/agent-workflow-kit bridge-settings --set "AGY_MODEL=Gemini 3.8 Flash (High)" --apply`, then unset `AGY_MODEL` in
+  your shell.
+- **If your installed agy lists its models without `Gemini 4 Hydrogen (High)`**, a run is refused before anything is
+  spent (exit 2), with the models it offers and a remedy naming one of them. Update the agy CLI to get the new model,
+  or set a model it offers: `/agent-workflow-kit bridge-settings --set "AGY_MODEL=<model>" --apply`. Where the catalog
+  cannot be read, the run skips this check with one warning, and agy itself refuses a model it does not serve.
+- **The default lives in the bridge's `capability.json`**, as `posture.model`, beside its twin
+  `settings[AGY_MODEL].default`, which a test holds equal; both wrappers' constants are generated from it. The kit README,
+  `/agent-workflow-kit bridge-settings`'s mode document and the bridge's own texts name it there and no longer repeat
+  the model; `/agent-workflow-kit bridge-settings` shows the model in effect and the models your agy offers. The
+  catalog check, the one-off rule and the remedy text are unchanged.
+
 ## 24.0.0 — every session starts from its stage's template, code and tests wait for your recorded yes, and on Claude Code a guard refuses code writes in a stage that writes none (AD-241)
 
 **After `npx @sabaiway/agent-workflow-kit@latest init` and then `/agent-workflow-kit upgrade` in a new session, each

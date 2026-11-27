@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync, execFile } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_MODEL = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8')).posture.model;
 export const WRAPPER = join(HERE, 'agy-review.sh');
 
 const FAKE_ENVELOPE_ENCODER = [
@@ -42,7 +43,7 @@ export const FAKE_AGY = [
   '    printf "models %s %s\\n" "${FOO_API_KEY:-unset}" "${ANTIGRAVITY_API_KEY:-unset}" >> "${AGY_FAKE_MODELS_LOG:-/dev/null}"',
   '    if [[ -n "${AGY_FAKE_MODELS_SLEEP:-}" ]]; then sleep "$AGY_FAKE_MODELS_SLEEP"; fi',
   '    if [[ -n "${AGY_FAKE_MODELS+x}" ]]; then printf "%s" "$AGY_FAKE_MODELS"; else',
-  '      printf "%s\\t%s\\n" gemini-3.8-flash-high "Gemini 3.8 Flash (High)" gemini-3.7-flash-low "Gemini 3.7 Flash (Low)" claude-opus-4-6-thinking "Claude Opus 4.6 (Thinking)"',
+  `      printf "%s\\t%s\\n" default-model '${DEFAULT_MODEL.replaceAll("'", "'\\''")}' gemini-3.7-flash-low "Gemini 3.7 Flash (Low)" claude-opus-4-6-thinking "Claude Opus 4.6 (Thinking)"`,
   '    fi',
   '    exit "${AGY_FAKE_MODELS_STATUS:-0}" ;;',
   'esac',

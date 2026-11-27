@@ -14,21 +14,31 @@ import { main } from './bridge-settings.mjs';
 import { surveyBridges } from './family-registry.mjs';
 import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { composeConfiguredPosture, composeStatusLine, buildReport } from './recipes.mjs';
+import * as syncMirrors from '../../scripts/sync-mirrors.mjs';
+import { AGY_BRIDGE, AGY_MANIFEST_REL, AGY_WRAPPERS, AGY_POSTURE_ROWS } from '../../scripts/sync-mirrors-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
 const KIT = resolve(HERE, '..');
+const CODEX_BRIDGE = 'codex-cli-bridge';
+const bundledManifest = (name) => JSON.parse(readFileSync(join(KIT, 'bridges', name, 'capability.json'), 'utf8'));
+const CODEX_DEFAULT = bundledManifest(CODEX_BRIDGE).posture.model;
+const AGY_DEFAULT = bundledManifest(AGY_BRIDGE).posture.model;
+const AGY_SAMPLE = 'Astra Two (Low)';
+const AGY_UNOFFERED = `Unoffered ${AGY_DEFAULT}`;
+const AGY_OFFERED = `${AGY_DEFAULT}, ${AGY_SAMPLE}`;
+const FIXTURE_DEFAULTS = { [CODEX_BRIDGE]: 'fixture-codex', [AGY_BRIDGE]: 'Fixture Polaris (High)' };
 // The catalog leaf ships with this story: a missing module fails each cell at its first use.
 const catalogLeaf = await import('./bridge-catalog.mjs').catch(() => ({}));
 const ABSENT = 'bridge-catalog.mjs is not present';
 const leaf = (name) => catalogLeaf[name] ?? (() => { throw new Error(ABSENT); })();
 
 const CODEX_CATALOG = JSON.stringify({ models: [
-  { slug: 'gpt-6.2-sol', visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }] },
+  { slug: CODEX_DEFAULT, visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }] },
   { slug: 'gpt-6-luna', visibility: 'list', priority: 2, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }] },
   { slug: 'gpt-6-hidden', visibility: 'hide', priority: 3, supported_reasoning_levels: [{ effort: 'low' }] },
 ] });
-const AGY_CATALOG = 'Available models:\nm1\tGemini 3.8 Flash (High)\nm2\tAstra Two (Low)\n';
+const AGY_CATALOG = `Available models:\nm1\t${AGY_DEFAULT}\nm2\t${AGY_SAMPLE}\n`;
 const OUTPUT = { codex: { ok: CODEX_CATALOG, notjson: 'not json', empty: '{"models":[]}' }, agy: { ok: AGY_CATALOG, notjson: 'no tab here\n', empty: '' } };
 
 const fake = (cli) => [
@@ -62,11 +72,15 @@ const sandbox = ({ codex = 'ok', agy = 'ok', settings } = {}) => {
 const calls = (sb) => (existsSync(sb.log) ? readFileSync(sb.log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
 const bridgeOf = (json, name) => json.bridges.find((b) => b.bridge === name);
 const JUDGE = 'typesafe-jev-bridge'; const JUDGE_OFFERED = ['jev-1.14.0', 'jev-1.13.0'];
-const makeJudgeBundle = (catalog = { offered: JUDGE_OFFERED }) => {
+const makeJudgeBundle = (catalog = { offered: JUDGE_OFFERED }, defaults = {}) => {
   const bundleRoot = mkdtempSync(join(SHARED, 'bundle-'));
   for (const name of ['codex-cli-bridge', 'antigravity-cli-bridge', JUDGE]) {
     const manifest = JSON.parse(readFileSync(join(REPO, name, 'capability.json'), 'utf8'));
     if (name === JUDGE) manifest.settings = [{ key: 'JEV_MODEL', kind: 'posture', default: manifest.posture.model, appliesTo: ['jev-ask'], effect: 'Selects the judge model.', ...catalog }];
+    if (name in defaults) {
+      manifest.posture.model = defaults[name];
+      manifest.settings.find((entry) => entry.kind === 'posture' && entry.key.endsWith('_MODEL')).default = defaults[name];
+    }
     mkdirSync(join(bundleRoot, name)); writeFileSync(join(bundleRoot, name, 'capability.json'), JSON.stringify(manifest));
   }
   return bundleRoot;
@@ -79,21 +93,28 @@ const extractBashFn = (source, name) => {
   assert.notEqual(start, -1, `wrapper carries ${name}()`);
   return lines.slice(start, lines.findIndex((l, i) => i > start && l === '}') + 1).join('\n');
 };
-const WRAPPERS = ['codex-cli-bridge/bin/codex-exec.sh', 'codex-cli-bridge/bin/codex-review.sh', 'antigravity-cli-bridge/bin/agy.sh', 'antigravity-cli-bridge/bin/agy-review.sh'];
+const WRAPPERS = ['codex-cli-bridge/bin/codex-exec.sh', 'codex-cli-bridge/bin/codex-review.sh', ...AGY_WRAPPERS];
 const wrapperSource = (rel) => readFileSync(join(REPO, rel), 'utf8');
 const runShell = (rel, fns, body, home) => spawnSync('bash', ['-c', `${fns.map((n) => extractBashFn(wrapperSource(rel), n)).join('\n')}\n${body}`],
   { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home } });
 
 describe('the read-out on a fresh host — spec:bridge-settings/S1', () => {
-  it('names each bridge default with source default and the models each CLI offers', async () => {
+  it('names each bridge manifest default with source default and the models each CLI offers', async () => {
     const sb = sandbox();
     const r = await main([], sb.ctx());
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /codex-cli-bridge: model gpt-6\.2-sol \[default\] · effort high \[default\]/);
-    assert.match(r.stdout, /antigravity-cli-bridge: model Gemini 3\.8 Flash \(High\) \[default\]/);
+    assert.ok(r.stdout.includes(`antigravity-cli-bridge: model ${AGY_DEFAULT} [default]`), r.stdout);
     assert.match(r.stdout, /offered: gpt-6\.2-sol \(low, medium, high\), gpt-6-luna \(low, medium\)\n/);
-    assert.match(r.stdout, /offered: Gemini 3\.8 Flash \(High\), Astra Two \(Low\)\n/);
+    assert.ok(r.stdout.includes(`offered: ${AGY_OFFERED}\n`), r.stdout);
     assert.doesNotMatch(r.stdout, /gpt-6-hidden/, 'only visibility list entries are offered');
+  });
+  it('reads other defaults from the supplied bundle manifests', async () => {
+    const sb = sandbox();
+    const bundleRoot = makeJudgeBundle(undefined, FIXTURE_DEFAULTS);
+    const r = await main([], sb.ctx({}, { bundleRoot }));
+    assert.equal(r.code, 0, r.stderr);
+    for (const [name, model] of Object.entries(FIXTURE_DEFAULTS)) assert.ok(r.stdout.includes(`${name}: model ${model} [default]`), r.stdout);
   });
 });
 
@@ -149,7 +170,7 @@ describe('a model or effort the catalog does not offer is refused before any wri
     await refused(sandbox({ settings: 'CODEX_EFFORT=high\n' }), ['--set', 'CODEX_MODEL=gpt-6-luna'], 'low, medium');
   });
   it('an unoffered agy model', async () => {
-    await refused(sandbox({ settings: '' }), ['--set', 'AGY_MODEL=Gemini 3.8 Flash'], 'Gemini 3.8 Flash (High), Astra Two (Low)');
+    await refused(sandbox({ settings: '' }), ['--set', `AGY_MODEL=${AGY_UNOFFERED}`], AGY_OFFERED);
   });
   it('an offered posture proceeds; the environment does not decide the judgment', async () => {
     const sb = sandbox({ settings: '' });
@@ -274,18 +295,71 @@ describe('the catalog read carries no API key or base URL and runs no model — 
   });
 });
 
+const AGY_MODEL_RE = /\bGemini \d+(?:\.\d+)* \w+(?: \(\w+\))?|\bClaude (?:Sonnet|Opus|Haiku) \d+(?:\.\d+)*(?: \(\w+\))?|\bGPT-OSS \d+B(?: \(\w+\))?|\b(?:gemini-|claude-(?:opus|sonnet|haiku)-|gpt-oss-)\d[\w.-]*/g;
+const EARLIER_DISPLAY = 'Gemini 3.8 Flash (High)';
+const EARLIER_CATALOG_ID = 'gemini-3.8-flash-high';
+const AGY_DEFAULT_SLOT = 'posture.model';
+const RENDER_PROBE = 'x';
+const KIT_README = 'agent-workflow-kit/README.md';
+const SETTINGS_MODE = 'agent-workflow-kit/references/modes/bridge-settings.md';
+const shippedAgyText = (rel) => {
+  const src = readFileSync(join(REPO, rel), 'utf8');
+  if (rel === AGY_MANIFEST_REL) {
+    const manifest = JSON.parse(src);
+    manifest.posture.model = '';
+    manifest.settings.find((entry) => entry.key === 'AGY_MODEL').default = '';
+    return JSON.stringify(manifest);
+  }
+  const row = AGY_POSTURE_ROWS.find(({ wrapper }) => wrapper === rel);
+  if (!row) return src;
+  assert.equal(typeof syncMirrors.renderPostureDefaults, 'function', 'renderPostureDefaults export is absent');
+  const region = syncMirrors.renderPostureDefaults(row, { model: RENDER_PROBE }).split('\n');
+  const lines = src.split('\n');
+  const start = lines.indexOf(region[0]);
+  const end = lines.indexOf(region.at(-1));
+  assert.ok(start >= 0 && end > start, `${rel}: generated posture defaults region`);
+  return [...lines.slice(0, start), ...lines.slice(end + 1)].join('\n');
+};
 describe('the shipped text names each default and the command — spec:bridge-settings/S10', () => {
-  const DEFAULTS = ['gpt-6.2-sol', 'Gemini 3.8 Flash (High)'];
   const MODEL_RE = /\bgpt-\d[\w.-]*|\bcodex-mini[\w.-]*|\bGemini \d+(?:\.\d+)? (?:Flash|Pro)(?: \((?:Low|Medium|High)\))?|\bClaude (?:Sonnet|Opus|Haiku) \d+(?:\.\d+)?(?: \(Thinking\))?|\bGPT-OSS \d+B(?: \(\w+\))?/g;
   const NAMING = ['codex-cli-bridge/SKILL.md', 'codex-cli-bridge/references/driving-codex.md', 'codex-cli-bridge/references/sandbox-and-flags.md',
     'antigravity-cli-bridge/SKILL.md', 'antigravity-cli-bridge/references/driving-agy.md', 'antigravity-cli-bridge/references/models-and-flags.md',
-    ...WRAPPERS, 'agent-workflow-kit/README.md', 'agent-workflow-kit/references/modes/bridge-settings.md'];
-  for (const rel of [...NAMING, 'codex-cli-bridge/capability.json', 'antigravity-cli-bridge/capability.json']) {
+    ...WRAPPERS, KIT_README, SETTINGS_MODE];
+  for (const rel of [...NAMING.filter((name) => name.startsWith(`${CODEX_BRIDGE}/`)), `${CODEX_BRIDGE}/capability.json`]) {
     it(`${rel} lists no vendor model beyond the defaults`, () => {
-      const extra = [...readFileSync(join(REPO, rel), 'utf8').matchAll(MODEL_RE)].map((m) => m[0]).filter((m) => !DEFAULTS.includes(m));
+      const extra = [...readFileSync(join(REPO, rel), 'utf8').matchAll(MODEL_RE)].map((m) => m[0]).filter((m) => m !== CODEX_DEFAULT);
       assert.deepEqual([...new Set(extra)], []);
     });
   }
+  it('the agy model detector matches earlier display and catalog-id shapes and the manifest default whole', () => {
+    for (const model of [EARLIER_DISPLAY, EARLIER_CATALOG_ID, AGY_DEFAULT]) assert.deepEqual([...model.matchAll(AGY_MODEL_RE)].map((match) => match[0]), [model]);
+  });
+  const agyFiles = syncMirrors.walkFiles(join(REPO, AGY_BRIDGE)).filter((rel) => !rel.endsWith('.test.mjs') && rel !== 'CHANGELOG.md').map((rel) => join(AGY_BRIDGE, rel));
+  for (const rel of [...agyFiles, KIT_README, SETTINGS_MODE]) {
+    it(`${rel} names no agy model outside the manifest values and generated regions`, () => {
+      const matches = [...shippedAgyText(rel).matchAll(AGY_MODEL_RE)].map((match) => match[0]);
+      assert.deepEqual([...new Set(matches)], []);
+    });
+  }
+  for (const rel of [KIT_README, SETTINGS_MODE]) {
+    it(`${rel} lists no codex model beyond its default`, () => {
+      const extra = [...readFileSync(join(REPO, rel), 'utf8').matchAll(MODEL_RE)].map((m) => m[0]).filter((m) => /^(?:gpt-|codex-mini)/.test(m) && m !== CODEX_DEFAULT);
+      assert.deepEqual([...new Set(extra)], []);
+    });
+  }
+  for (const rel of [...NAMING.filter((name) => name.startsWith(`${AGY_BRIDGE}/`)), AGY_MANIFEST_REL, KIT_README]) {
+    it(`${rel} names posture.model`, () => {
+      const src = readFileSync(join(REPO, rel), 'utf8');
+      const prose = rel === AGY_MANIFEST_REL
+        ? JSON.parse(src).modeCatalog.find((mode) => mode.key === 'run')?.guardrails?.find(({ value }) => value.includes('AGY_MODEL'))?.value
+        : rel === KIT_README ? src.split('`AGY_MODEL` (')[1]?.split(')')[0] : src;
+      assert.ok(prose?.includes(AGY_DEFAULT_SLOT), `${rel} does not name ${AGY_DEFAULT_SLOT}`);
+    });
+  }
+  it(`${SETTINGS_MODE} names posture.model in the AGY_MODEL row`, () => {
+    const row = readFileSync(join(REPO, SETTINGS_MODE), 'utf8').split('\n').find((line) => line.startsWith('|') && line.includes('`AGY_MODEL`'));
+    assert.ok(row?.includes(AGY_DEFAULT_SLOT), `AGY_MODEL row does not name ${AGY_DEFAULT_SLOT}`);
+  });
   for (const rel of NAMING) {
     it(`${rel} names /agent-workflow-kit bridge-settings`, () => {
       assert.ok(readFileSync(join(REPO, rel), 'utf8').includes('/agent-workflow-kit bridge-settings'));
@@ -325,7 +399,7 @@ describe('--json is one document for each catalog state — spec:bridge-settings
     assert.deepEqual(bridgeOf(out, 'antigravity-cli-bridge').catalog, { state: 'unreadable', cause: 'agy models exited 3', entries: [] });
     const none = JSON.parse((await main(['--json'], sandbox({ codex: 'absent' }).ctx())).stdout);
     assert.deepEqual(bridgeOf(none, 'codex-cli-bridge').catalog, { state: 'not-installed', cause: 'codex is not on PATH', entries: [] });
-    assert.deepEqual(bridgeOf(none, 'antigravity-cli-bridge').catalog.entries, [{ model: 'Gemini 3.8 Flash (High)' }, { model: 'Astra Two (Low)' }]);
+    assert.deepEqual(bridgeOf(none, 'antigravity-cli-bridge').catalog.entries, [{ model: AGY_DEFAULT }, { model: AGY_SAMPLE }]);
   });
 });
 

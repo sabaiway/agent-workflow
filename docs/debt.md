@@ -3,6 +3,17 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **POSTURE-SETTING-DEFAULT-DERIVES-FROM-THE-POSTURE-BLOCK** — invariant: a bridge's posture default is written once
+  in its manifest. Origin: `antigravity-cli-bridge/capability.json:8` (`posture.model`) and `:214`
+  (`settings[AGY_MODEL].default`) hold the same value, as do the codex and judge manifests. Narrow fix, shipped with
+  AGY-DEFAULT-IS-GEMINI-4-HYDROGEN-HIGH S1: their equality is held by S6 of spec `bridges/bridge-settings`
+  (`agent-workflow-kit/tools/bridge-settings-model.test.mjs`) and the judge's `jev-ask.test.mjs`. Generalization: a
+  posture-kind setting derives its default from the posture block, a family schema change landed with the next real
+  codex and judge release (a changed bridge file forces a bump, `scripts/release/bridge-baseline.mjs:81-82`, and a
+  release that changes nothing for a user is not shipped, by the story-sessions rule).
+  Residual, NOT live: a move that edits one field turns S6 red before any release. Raised by the S1 design consult
+  (codex), 2026-11-26.
+
 - **STAGE-WRITER-START-PROMPT-WITH-NO-GIT-DIRECTORY** — invariant: the stage writer and its contract name the same
   trees for the start prompt. Origin: `agent-workflow-kit/tools/stage-render/cli.mjs:93` (`isMainTree(null)` holds, so
   `--write` where git answers no git directory prints the start prompt) against stage-render's next-session part ("in

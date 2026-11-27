@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-27 — AD-242: the agy bridge runs Gemini 4 Hydrogen (High) by default, set in its manifest, and the wrappers' constants are generated from it (agy bridge 8.1.0 MINOR, kit 24.1.0 MINOR; memory, engine, codex and the judge unchanged)
+
+**`antigravity-cli-bridge/capability.json`** names `Gemini 4 Hydrogen (High)` in `posture.model` and as the
+`AGY_MODEL` default, and its `agy-run` guardrail names `posture.model` in place of a model. **`scripts/sync-mirrors.mjs`**
+gains the family `posture-defaults` (exported `renderPostureDefaults(row, posture)`, after `stage-guard-locations`): it
+writes one marked region in **`bin/agy.sh`** and **`bin/agy-review.sh`**, `DEFAULT_AGY_MODEL='<posture.model>'`
+(agy-review's `DEFAULT_AGY_REVIEW_MODEL` renamed), and refuses before any write an invalid value, a region that is not
+one assignment of that constant, wrong markers and a wrapper that is not a regular file or has a symbolic link in its
+path; the bridge mirror family takes every earlier family's pending write by its path under the canon root, so one run
+also carries the regions into `agent-workflow-kit/bridges/antigravity-cli-bridge/`. The wrappers' headers, `SKILL.md`,
+`references/driving-agy.md`, `references/models-and-flags.md`, the kit `README.md` and
+`references/modes/bridge-settings.md` name the default as `posture.model` and no model id. The agy suites,
+`posture-parity.test.mjs`, `recipes.test.mjs`, `bridge-posture.test.mjs` and `bridge-settings-model.test.mjs` read the
+default from the manifest; S10 of the last scans the agy texts for any agy model id; `sync-mirrors.test.mjs` and its
+fixture gain S19-S21. Specs `bridges/bridge-model` revision 5 and `bridges/bridge-settings` revision 4. New debt row
+POSTURE-SETTING-DEFAULT-DERIVES-FROM-THE-POSTURE-BLOCK.
+
 ## 2026-11-26 — AD-241: every stage is told by one kit template, code and tests wait for the recorded yes, and on Claude Code a guard refuses code writes in a stage that writes none (kit 24.0.0 MAJOR, engine 7.0.0 MAJOR, codex bridge 7.0.0 MAJOR, memory 11.2.0 MINOR; agy and the judge unchanged)
 
 Ships the twelve commits since `a64860c` (stories S1-S4 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN, S1-S5 of

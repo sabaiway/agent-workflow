@@ -13,7 +13,7 @@ const AGY_RUN = join(HERE, 'agy.sh');
 const MANIFEST = JSON.parse(readFileSync(join(BRIDGE, 'capability.json'), 'utf8'));
 const REAL_TIMEOUT = spawnSync('bash', ['-c', 'type -P timeout'], { encoding: 'utf8' }).stdout.trim();
 const ESC = String.fromCharCode(27);
-const DEFAULT = 'Gemini 3.8 Flash (High)';
+const DEFAULT = MANIFEST.posture.model;
 const SET = 'Claude Opus 4.6 (Thinking)';
 const SECOND = 'Gemini 3.7 Flash (Low)';
 const FACTS = ['code', '--facts', 'a verified fact'];
@@ -101,7 +101,7 @@ describe('agy runs the host posture on both wrappers, with no advisory', () => {
   });
   for (const [label, settings, env, model] of [
     ['the setting restated in the env', `AGY_MODEL=${SET}\n`, { AGY_MODEL: SET }, SET],
-    ['env Gemini 3.8 Flash (High) on a fresh host', undefined, { AGY_MODEL: DEFAULT }, DEFAULT],
+    ['the default model in the env on a fresh host', undefined, { AGY_MODEL: DEFAULT }, DEFAULT],
   ]) {
     it(`${label} is no one-off: agy-review runs it, source environment`, () => {
       const r = drive(sandbox({ settings }), FACTS, env);
@@ -116,7 +116,7 @@ describe('an agy one-off is refused pre-spend unless AGY_PROBE=1 — spec:bridge
     const hook = MANIFEST.modeCatalog.find((mode) => mode.key === 'AGY_PROBE');
     assert.deepEqual([...hook.parents].sort(), Object.keys(PARENTS).sort());
   });
-  const forms = [['env Gemini 3.8 Flash (High)', DEFAULT], ['a second offered non-default model', SECOND], ['an explicitly empty AGY_MODEL=', '']];
+  const forms = [['the default model in the env', DEFAULT], ['a second offered non-default model', SECOND], ['an explicitly empty AGY_MODEL=', '']];
   for (const [label, model] of forms) {
     for (const [parent, args] of Object.entries(PARENTS)) {
       it(`${label} on ${parent}: refused with the remedy, run under AGY_PROBE=1`, () => {

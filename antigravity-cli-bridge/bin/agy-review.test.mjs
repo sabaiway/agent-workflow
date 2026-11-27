@@ -2736,8 +2736,9 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 },
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=Gemini 3\.8 Flash \(High\)/, 'the banner states the actual run posture');
-    assert.deepEqual(receipts[0].posture, { model: 'Gemini 3.8 Flash (High)' }, 'banner ↔ receipt parity');
+    const modelPattern = MANIFEST.posture.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(r.stderr, new RegExp(`^review posture: model=${modelPattern} source=`, 'm'), 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, { model: MANIFEST.posture.model }, 'banner ↔ receipt parity');
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
@@ -2790,7 +2791,7 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 },
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=Gemini 3\.8 Flash \(High\) source=model:default timeout=30m$/m);
+    assert.ok(r.stderr.split('\n').includes(`review posture: model=${MANIFEST.posture.model} source=model:default timeout=30m`));
     assert.deepEqual(Object.keys(receipts[0].posture), ['model'], 'timeout never enters the receipt posture');
   });
 

@@ -15,6 +15,18 @@ afterEach(() => {
 });
 export const SERVICES_REL = 'agent-workflow-kit/tools/services';
 export const FACTS_FILE = 'service-facts.txt';
+export const AGY_BRIDGE = 'antigravity-cli-bridge';
+export const AGY_MANIFEST_REL = join(AGY_BRIDGE, 'capability.json');
+export const AGY_WRAPPERS = ['bin/agy.sh', 'bin/agy-review.sh'].map((rel) => `${AGY_BRIDGE}/${rel}`);
+export const AGY_MODEL_CONSTANT = 'DEFAULT_AGY_MODEL';
+export const LEGACY_AGY_MODEL_CONSTANT = 'DEFAULT_AGY_REVIEW_MODEL';
+export const AGY_POSTURE_ROWS = AGY_WRAPPERS.map((wrapper) => ({ bridge: AGY_BRIDGE, wrapper, constant: AGY_MODEL_CONSTANT, slot: 'model' }));
+export const FIXTURE_MODEL = 'Fixture Aurora (High)';
+export const POSTURE_BEGIN = '# generated from capability.json posture by scripts/sync-mirrors.mjs; do not edit';
+export const POSTURE_END = '# end of the generated posture defaults';
+export const AGY_READER_BEGIN = '# --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---';
+export const postureRegionLines = (model) => [POSTURE_BEGIN, `${AGY_MODEL_CONSTANT}='${model}'`, POSTURE_END];
+const EXECUTABLE_MODE = 0o755;
 const BRIDGE_SERVICES = new Map([
   ['codex-cli-bridge', ['codex', 'jev']],
   ['antigravity-cli-bridge', ['antigravity', 'jev']],
@@ -44,10 +56,15 @@ export const seedFamily = (root) => {
     for (const base of [join(root, bridge), join(root, 'agent-workflow-kit', 'bridges', bridge)]) {
       mkdirSync(join(base, 'bin'), { recursive: true });
       writeFileSync(join(base, 'SKILL.md'), `# ${bridge}\n`);
-      writeFileSync(join(base, 'capability.json'), `${JSON.stringify({ name: bridge, version: '1.0.0', services })}\n`);
+      const posture = bridge === AGY_BRIDGE ? { posture: { model: FIXTURE_MODEL } } : {};
+      writeFileSync(join(base, 'capability.json'), `${JSON.stringify({ name: bridge, version: '1.0.0', services, ...posture })}\n`);
       writeFileSync(join(base, FACTS_FILE), seedFacts(services));
       writeFileSync(join(base, 'bin', 'run.sh'), '#!/bin/sh\necho run\n');
       chmodSync(join(base, 'bin', 'run.sh'), 0o755);
+      if (bridge === AGY_BRIDGE) for (const wrapper of AGY_WRAPPERS) {
+        const path = join(base, wrapper.slice(AGY_BRIDGE.length + 1));
+        writeFileSync(path, ['#!/bin/bash', ...postureRegionLines(FIXTURE_MODEL), AGY_READER_BEGIN, 'echo run', ''].join('\n'), { mode: EXECUTABLE_MODE });
+      }
     }
   }
   for (const side of ['agent-workflow-memory', 'agent-workflow-kit']) {

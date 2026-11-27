@@ -3,9 +3,9 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "8.0.2",
+  "version": "8.1.0",
   "provides": ["review", "probe"],
-  "posture": { "model": "Gemini 3.8 Flash (High)" },
+  "posture": { "model": "Gemini 4 Hydrogen (High)" },
   "roles": {
     "review": {
       "cmd": "agy-review",
@@ -181,7 +181,7 @@
       ],
       "guardrails": [
         { "value": "subscription-only — every *_API_KEY except the passed variables its service-facts.txt lists is unset before the run; those variables pass as given and nothing in agy's permissions is widened", "enforcement": "enforced", "source": "bin/agy.sh" },
-        { "value": "the model is the host posture (AGY_MODEL in the bridge settings file, else Gemini 3.8 Flash (High)); AGY_MODEL in the environment sets it for one run", "enforcement": "enforced", "source": "bin/agy.sh" },
+        { "value": "the model is the host posture (AGY_MODEL in the bridge settings file, else this manifest's posture.model); AGY_MODEL in the environment sets it for one run", "enforcement": "enforced", "source": "bin/agy.sh" },
         { "value": "hard wall-clock cap AGY_HARD_TIMEOUT (built-in default 5m)", "enforcement": "enforced", "condition": "only while timeout(1)/gtimeout is on PATH — otherwise the wrapper warns and runs uncapped", "source": "capability.json settings.AGY_HARD_TIMEOUT" },
         { "value": "the prompt rides a single argv — over AGY_MAX_PROMPT_BYTES (120000) the run refuses", "enforcement": "enforced", "source": "bin/agy.sh" },
         { "value": "no review posture, no grounding, no receipt — the reply is raw model output", "enforcement": "advisory", "source": "bin/agy.sh" }
@@ -211,7 +211,7 @@
     {
       "key": "AGY_MODEL",
       "kind": "posture",
-      "default": "Gemini 3.8 Flash (High)",
+      "default": "Gemini 4 Hydrogen (High)",
       "appliesTo": ["agy-run", "agy-review"],
       "effect": "the agy model every run uses (the host posture), an exact display string; a set value is checked against the installed agy's catalog first. /agent-workflow-kit bridge-settings shows the models offered."
     },

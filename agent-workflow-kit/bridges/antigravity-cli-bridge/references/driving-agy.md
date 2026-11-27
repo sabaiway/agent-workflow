@@ -17,8 +17,8 @@ edits, verification, and final judgment.
 ## Model selection
 
 Reviews and kept work run on the host posture: `AGY_MODEL` in the bridge settings file, else
-`Gemini 3.8 Flash (High)`; a weaker model is the user's choice in that setting, never a per-call pick.
-**`/agent-workflow-kit bridge-settings`** shows the models the installed `agy` offers and sets that
+`posture.model` in the bridge's `capability.json`; a weaker model is the user's choice in that setting, never a per-call pick.
+**`/agent-workflow-kit bridge-settings`** shows the model in effect and the models the installed `agy` offers, and sets that
 setting; an `agy-run` probe may name any offered display string as its one-run model.
 
 Don't reach for Pro by reflex — Flash answers most reachability/probe questions for a fraction of the
@@ -90,7 +90,7 @@ What it does for you, and what YOU must supply:
   `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED** (recognized, arms nothing): headless `agy` auto-denies its
   own `read_file`, so the offload it armed could return a confident fabrication with no way to tell.
   The kit never grants that permission — the feed exists so none is needed.
-- **Model:** the host posture (the `AGY_MODEL` setting, else `Gemini 3.8 Flash (High)`), checked once
+- **Model:** the host posture (the `AGY_MODEL` setting, else `posture.model` in the bridge's `capability.json`), checked once
   per run against `agy models`; an `AGY_MODEL` environment value off it is a one-off, refused pre-spend
   unless `AGY_PROBE=1` (a probe review never attests). The service can still **stall on large/substantive prompts**
   (Issue-001) — keep reviews **focused**; the hard timeout is the guard.

@@ -1,11 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { REPO_ROOT, BRIDGE_DIRS, TEMPLATE_HARD_EXCLUDES, planAllMirrors, renderGateHookLists, syncBridgeMirror } from './sync-mirrors.mjs';
-import { makeRoot, seedFamily as seedExistingFamily, run, SERVICES_REL, FACTS_FILE } from './sync-mirrors-fixture.mjs';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync, lstatSync, renameSync, symlinkSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import * as syncMirrors from './sync-mirrors.mjs';
+import { makeRoot, seedFamily as seedExistingFamily, run, SERVICES_REL, FACTS_FILE, AGY_BRIDGE, AGY_MANIFEST_REL, AGY_WRAPPERS, AGY_POSTURE_ROWS, AGY_MODEL_CONSTANT, LEGACY_AGY_MODEL_CONSTANT, FIXTURE_MODEL, POSTURE_BEGIN, POSTURE_END, postureRegionLines } from './sync-mirrors-fixture.mjs';
 import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
 import { GATES, LANES } from '../agent-workflow-memory/references/scripts/shared/index.mjs';
+const { REPO_ROOT, BRIDGE_DIRS, TEMPLATE_HARD_EXCLUDES, planAllMirrors, renderGateHookLists, syncBridgeMirror } = syncMirrors;
 const STAGE_GUARD_REL = 'agent-workflow-kit/references/hooks/stage-write-guard.mjs';
 const STAGE_TABLE_REL = 'agent-workflow-kit/tools/stage-render/stages.json';
 const seedFamily = (root) => {
@@ -446,6 +448,167 @@ describe('stage-guard-locations sync', () => {
     assert.ok(`${refused.text}\n${refused.errText}`.includes(STAGE_TABLE_REL), `${refused.text}\n${refused.errText}`);
   });
 });
+const [RUN_WRAPPER, REVIEW_WRAPPER] = AGY_WRAPPERS;
+const POSTURE_FAMILY = 'posture-defaults';
+const DRIFTED_FACTS = 'drifted service facts\n';
+const NEXT_MODEL = 'Fixture Borealis (Low)';
+const HOSTILE_MODEL = 'Fixture $ " \\ $( : > "$MARKER" ) `: > "$MARKER"`';
+const NO_PERMISSIONS = 0o000;
+const ROOT_UID = 0;
+const snapshotFiles = (root) => {
+  const walk = (rel) => readdirSync(join(root, rel)).flatMap((name) => {
+    const child = join(rel, name);
+    const stat = lstatSync(join(root, child));
+    return stat.isDirectory() ? walk(child) : stat.isFile() ? [[child, readFileSync(join(root, child))]] : [];
+  });
+  return Object.fromEntries(walk(''));
+};
+const editManifest = (root, edit) => {
+  const path = join(root, AGY_MANIFEST_REL);
+  const manifest = JSON.parse(readFileSync(path, 'utf8'));
+  edit(manifest);
+  writeFileSync(path, JSON.stringify(manifest));
+};
+const getRender = () => {
+  assert.equal(typeof syncMirrors.renderPostureDefaults, 'function', 'renderPostureDefaults export is absent');
+  return syncMirrors.renderPostureDefaults;
+};
+
+describe('spec:bridge-model/S19 posture defaults render as literal shell values', () => {
+  for (const row of AGY_POSTURE_ROWS) {
+    it(`renders the three contract lines for ${row.wrapper}`, () => {
+      assert.equal(getRender()(row, { model: FIXTURE_MODEL }), postureRegionLines(FIXTURE_MODEL).join('\n'));
+    });
+  }
+  it('bash reads the hostile model byte-for-byte without running substitutions', () => {
+    const render = getRender();
+    const root = makeRoot();
+    const marker = join(root, 'marker');
+    const path = join(root, 'region.sh');
+    for (const row of AGY_POSTURE_ROWS) {
+      writeFileSync(path, render(row, { model: HOSTILE_MODEL }));
+      const result = spawnSync('bash', ['--noprofile', '--norc', '-c', 'source "$1"; printf %s "$DEFAULT_AGY_MODEL"', 'bash', path], { env: { PATH: process.env.PATH, MARKER: marker } });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stderr.toString());
+      assert.deepEqual(result.stdout, Buffer.from(HOSTILE_MODEL));
+      assert.equal(existsSync(marker), false, 'no command substitution ran');
+    }
+  });
+});
+
+const manifestRefusals = [
+  ['single quote', "Fixture's model"], ['control byte', 'Fixture\x01model'], ['newline', 'Fixture\nmodel'],
+  ['leading space', ' Fixture'], ['trailing space', 'Fixture '], ['empty string', ''],
+  ['lone surrogate', '\ud800'], ['number', 42],
+].map(([name, model]) => [name, AGY_MANIFEST_REL, (root) => editManifest(root, (manifest) => { manifest.posture.model = model; })]);
+const ASSIGNMENT = postureRegionLines(FIXTURE_MODEL)[1];
+const rewriteWrapper = (rewrite) => (root) => {
+  const path = join(root, RUN_WRAPPER);
+  writeFileSync(path, rewrite(readFileSync(path, 'utf8')));
+};
+const wrapperRefusals = [
+  ['absent wrapper', (root) => rmSync(join(root, RUN_WRAPPER))],
+  ['directory at wrapper path', (root) => { const path = join(root, RUN_WRAPPER); rmSync(path); mkdirSync(path); }],
+  ['symlink at wrapper path', (root) => {
+    const path = join(root, RUN_WRAPPER);
+    const target = join(root, 'valid-wrapper.sh');
+    renameSync(path, target); symlinkSync(target, path);
+  }],
+  ['symlink at bin directory', (root) => {
+    const bin = dirname(join(root, RUN_WRAPPER));
+    const target = join(root, 'valid-bin');
+    renameSync(bin, target); symlinkSync(target, bin, 'dir');
+  }],
+  ['zero begin lines', rewriteWrapper((text) => text.replace(`${POSTURE_BEGIN}\n`, ''))],
+  ['two begin lines', rewriteWrapper((text) => text.replace(POSTURE_BEGIN, `${POSTURE_BEGIN}\n${POSTURE_BEGIN}`))],
+  ['zero end lines', rewriteWrapper((text) => text.replace(`${POSTURE_END}\n`, ''))],
+  ['two end lines', rewriteWrapper((text) => text.replace(POSTURE_END, `${POSTURE_END}\n${POSTURE_END}`))],
+  ['end before begin', rewriteWrapper((text) => text.split('\n').map((line) => line === POSTURE_BEGIN ? POSTURE_END : line === POSTURE_END ? POSTURE_BEGIN : line).join('\n'))],
+  ['marker with trailing whitespace', rewriteWrapper((text) => text.replace(POSTURE_BEGIN, `${POSTURE_BEGIN} `))],
+  ['zero lines between markers', rewriteWrapper((text) => text.replace(`${ASSIGNMENT}\n`, ''))],
+  ['two lines between markers', rewriteWrapper((text) => text.replace(ASSIGNMENT, `${ASSIGNMENT}\n${ASSIGNMENT}`))],
+  ['double-quoted assignment', rewriteWrapper((text) => text.replace(ASSIGNMENT, ASSIGNMENT.replaceAll("'", '"')))],
+  ['wrong constant assignment', rewriteWrapper((text) => text.replace(ASSIGNMENT, ASSIGNMENT.replace(AGY_MODEL_CONSTANT, LEGACY_AGY_MODEL_CONSTANT)))],
+  ['text after closing quote', rewriteWrapper((text) => text.replace(ASSIGNMENT, `${ASSIGNMENT} extra`))],
+].map(([name, edit]) => [name, RUN_WRAPPER, edit]);
+const UNREADABLE = 'unreadable wrapper';
+const refusalCells = [
+  ...manifestRefusals,
+  ['absent posture block', AGY_MANIFEST_REL, (root) => editManifest(root, (manifest) => { delete manifest.posture; })],
+  ['absent posture.model', AGY_MANIFEST_REL, (root) => editManifest(root, (manifest) => { delete manifest.posture.model; })],
+  ['invalid UTF-8 in the manifest', AGY_MANIFEST_REL, (root) => {
+    const path = join(root, AGY_MANIFEST_REL);
+    const [head, tail] = readFileSync(path, 'utf8').split(FIXTURE_MODEL);
+    writeFileSync(path, Buffer.concat([Buffer.from(head), Buffer.from([0xff]), Buffer.from(tail)]));
+  }],
+  ...wrapperRefusals,
+  [UNREADABLE, RUN_WRAPPER, () => {}],
+  ['absent review wrapper', REVIEW_WRAPPER, (root) => rmSync(join(root, REVIEW_WRAPPER))],
+];
+
+describe('spec:bridge-model/S20 posture defaults refuse every inadmissible state before any write', () => {
+  for (const [name, rel, edit] of refusalCells) {
+    it(`refuses ${name} naming ${rel} in both modes`, (t) => {
+      if (name === UNREADABLE && process.getuid?.() === ROOT_UID) return t.skip('root can read a mode-000 file');
+      const root = makeRoot();
+      seedFamily(root);
+      writeFileSync(join(root, 'codex-cli-bridge', FACTS_FILE), DRIFTED_FACTS);
+      edit(root);
+      const before = snapshotFiles(root);
+      const invoke = (operation) => {
+        if (name !== UNREADABLE) return operation();
+        const path = join(root, rel);
+        const mode = lstatSync(path).mode;
+        chmodSync(path, NO_PERMISSIONS);
+        try { return operation(); } finally { chmodSync(path, mode); }
+      };
+      assert.throws(() => invoke(() => planAllMirrors(root)), (error) => error.message.includes(rel));
+      assert.deepEqual(snapshotFiles(root), before);
+      for (const argv of [['--check'], []]) {
+        const result = invoke(() => run(argv, root));
+        assert.equal(result.code, 1, `${result.text}\n${result.errText}`);
+        assert.ok(result.errText.includes(rel), `${result.text}\n${result.errText}`);
+        assert.deepEqual(snapshotFiles(root), before);
+      }
+    });
+  }
+});
+
+describe('spec:bridge-model/S21 posture defaults converge with service facts and nested mirror writes', () => {
+  it('plans posture-defaults immediately after stage-guard-locations', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    assert.deepEqual(planAllMirrors(root).slice(0, 4).map(({ family }) => family), ['service-facts', 'gate-hook-lists', 'stage-guard-locations', POSTURE_FAMILY]);
+  });
+  it('checks both wrapper changes without writes, then one run converges canon and mirror', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    const originals = AGY_WRAPPERS.map((rel) => readFileSync(join(root, rel), 'utf8'));
+    const facts = join(AGY_BRIDGE, FACTS_FILE);
+    const renderedFacts = readFileSync(join(root, facts));
+    editManifest(root, (manifest) => { manifest.posture.model = NEXT_MODEL; });
+    writeFileSync(join(root, facts), DRIFTED_FACTS);
+    const before = snapshotFiles(root);
+    const check = run(['--check'], root);
+    assert.equal(check.code, 1, check.errText);
+    for (const rel of AGY_WRAPPERS) {
+      const expected = `${POSTURE_FAMILY}: would write ${rel}`;
+      assert.ok(check.out.includes(expected), `missing ${expected}\n${check.text}`);
+    }
+    assert.deepEqual(snapshotFiles(root), before);
+    const apply = run([], root);
+    assert.equal(apply.code, 0, apply.errText);
+    for (const [index, rel] of AGY_WRAPPERS.entries()) {
+      const expected = originals[index].replace(postureRegionLines(FIXTURE_MODEL).join('\n'), () => postureRegionLines(NEXT_MODEL).join('\n'));
+      assert.deepEqual(readFileSync(join(root, rel)), Buffer.from(expected), rel);
+    }
+    assert.deepEqual(readFileSync(join(root, facts)), renderedFacts);
+    for (const rel of [...AGY_WRAPPERS, AGY_MANIFEST_REL, facts]) assert.deepEqual(readFileSync(join(root, 'agent-workflow-kit', 'bridges', rel)), readFileSync(join(root, rel)), rel);
+    const clean = run(['--check'], root);
+    assert.equal(clean.code, 0, `${clean.text}\n${clean.errText}`);
+  });
+});
+
 describe('the real tree', () => {
   it('the current repo is fully in sync (release invariant): --check exits 0', () => {
     const { code, errText, text } = run(['--check'], REPO_ROOT);

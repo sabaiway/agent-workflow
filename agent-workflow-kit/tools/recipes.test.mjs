@@ -28,6 +28,7 @@ import {
 import { detectBackends, READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
 import { usedBridges } from './bridge-sandbox-recipe.mjs';
 import { stripGitLocationEnv } from './git-env.mjs';
+import { escapeRegExp } from './repo-lex.mjs';
 const { mergeServices, loadServiceFragments } = await import('./services/index.mjs').catch(() => ({}));
 const recipesModule = await import('./recipes.mjs');
 const getRecommendWiredRecipe = () => {
@@ -1127,7 +1128,8 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
     assert.match(line, /autonomy: plan-authoring=prompt, plan-execution=prompt \(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)/);
     // The D5 posture tail: composed from the bundled manifests' pins; cleanEnv strips the tier
     // knob, so the codex tier renders the pinned standard default.
-    assert.match(line, new RegExp(String.raw`· posture: codex model=${readManifest('codex-cli-bridge').posture.model.replace(/\./g, '\\.')} effort=high tier=standard · agy model=Gemini 3\.8 Flash \(High\)$`));
+    const agyModel = escapeRegExp(readManifest(join('agent-workflow-kit', 'bridges', AGY)).posture.model);
+    assert.match(line, new RegExp(String.raw`· posture: codex model=${readManifest('codex-cli-bridge').posture.model.replace(/\./g, '\\.')} effort=high tier=standard · agy model=${agyModel}$`));
   });
 
   it('rejects an unknown/mistyped argument loudly — never the silent multi-line human render', () => {

@@ -18,8 +18,8 @@
 # to whatever flow we design later, which can opt in via passthrough flags.
 #
 # Model: the host posture — AGY_MODEL in the bridge settings file, else the built-in default
-# "Gemini 3.8 Flash (High)". `/agent-workflow-kit bridge-settings` shows the models the installed
-# agy offers and sets one.
+# posture.model in the bridge's capability.json. `/agent-workflow-kit bridge-settings` shows the model
+# in effect and the models the installed agy offers, and sets one.
 #
 # Usage (installed on PATH as `agy-run`):
 #   agy-run "your prompt"                    # prompt as an argument
@@ -137,7 +137,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT"
-DEFAULT_AGY_MODEL="Gemini 3.8 Flash (High)"
+# generated from capability.json posture by scripts/sync-mirrors.mjs; do not edit
+DEFAULT_AGY_MODEL='Gemini 4 Hydrogen (High)'
+# end of the generated posture defaults
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,

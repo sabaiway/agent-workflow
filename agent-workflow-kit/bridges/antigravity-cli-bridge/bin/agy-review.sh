@@ -36,9 +36,9 @@
 #
 # Environment (every optional var has an explicit default so a no-env run is safe under set -u):
 #   AGY_MODEL                an environment value off the host posture (AGY_MODEL in the settings file, else
-#                            "Gemini 3.8 Flash (High)") is a one-off — an explicitly empty one included —
+#                            posture.model in the bridge's capability.json) is a one-off — an explicitly empty one included —
 #                            refused pre-spend unless AGY_PROBE=1. `/agent-workflow-kit bridge-settings`
-#                            shows the models the installed agy offers and sets the host posture.
+#                            shows the model in effect and the models the installed agy offers, and sets the host posture.
 #   AGY_HARD_TIMEOUT         default 30m  (duration string; the timeout(1) hard cap via agy-run)
 #   AGY_TIMEOUT              default = AGY_HARD_TIMEOUT (agy's soft --print-timeout)
 #   AGY_MAX_PROMPT_BYTES     default 120000 (single-argv byte ceiling; see agy.sh)
@@ -250,7 +250,9 @@ esac
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES"
-DEFAULT_AGY_REVIEW_MODEL="Gemini 3.8 Flash (High)"
+# generated from capability.json posture by scripts/sync-mirrors.mjs; do not edit
+DEFAULT_AGY_MODEL='Gemini 4 Hydrogen (High)'
+# end of the generated posture defaults
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
@@ -392,7 +394,7 @@ aw_read_posture() {
 # recovery differs by source (a file `--unset` cannot clear an env override).
 AGY_ALLOW_ADDDIR_FROM_ENV=0
 if [[ -n "${AGY_REVIEW_ALLOW_ADDDIR+x}" ]]; then AGY_ALLOW_ADDDIR_FROM_ENV=1; fi
-aw_read_posture AGY_MODEL "$DEFAULT_AGY_REVIEW_MODEL" ""
+aw_read_posture AGY_MODEL "$DEFAULT_AGY_MODEL" ""
 HOST_AGY_MODEL="$AW_HOST_VALUE"; AGY_MODEL="$AW_RUN_VALUE"; AGY_MODEL_SOURCE="$AW_RUN_SOURCE"
 aw_apply_settings
 
@@ -463,7 +465,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="8.0.2"  # aw-version-anchor
+AW_BRIDGE_VERSION="8.1.0"  # aw-version-anchor
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE any interpolation can echo raw
 # newline/ESC bytes into stderr/the terminal (round-2 fold).
 if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
@@ -803,7 +805,7 @@ export AW_AGY_CATALOG_READ=1
 # Every child agy-run is this review's (spec jev-every-run): its prompts forbid every tool, so a review whose model
 # obeys them sends no request (an advisory prohibition, not a sandbox), and the child prints no limit line.
 export AW_AGY_REVIEW_CHILD=1
-if [[ -n "$AGY_MODEL" ]]; then aw_agy_catalog_check "$aw_review_timeout_bin" "$DEFAULT_AGY_REVIEW_MODEL"; fi
+if [[ -n "$AGY_MODEL" ]]; then aw_agy_catalog_check "$aw_review_timeout_bin" "$DEFAULT_AGY_MODEL"; fi
 if [[ "$AGY_MODEL" != "$HOST_AGY_MODEL" && "$AGY_PROBE" != "1" ]]; then
   echo "error: $(aw_agy_shown_model) is a one-off — the host posture is '$HOST_AGY_MODEL', and only a probe (AGY_PROBE=1) runs a one-off; refusing before any run is spent." >&2
   aw_agy_remedy "$AGY_MODEL"

@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '8.0.2'
+  version: '8.1.0'
 ---
 
 # antigravity-cli-bridge
@@ -54,11 +54,11 @@ agy*); the model every review and kept run uses is the host posture below, never
 
 The model is **a host setting**: `AGY_MODEL=<exact display string>` in the bridge settings file
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` is the host posture, else the
-built-in default `Gemini 3.8 Flash (High)`. An `AGY_MODEL` environment value off the host posture
+built-in default `posture.model` in the bridge's `capability.json`. An `AGY_MODEL` environment value off the host posture
 (an explicitly empty one included) is a one-off, which `agy-run` (the probe role) runs and
 `agy-review` refuses pre-spend unless `AGY_PROBE=1`; a `--model`/`--effort` flag after `--` is refused. Before any run the wrappers check the
 model against `agy models` (the live list): a model it does not offer is refused with the offered list
-and the settings-file remedy. **`/agent-workflow-kit bridge-settings`** shows the models the installed
+and the settings-file remedy. **`/agent-workflow-kit bridge-settings`** shows the model in effect and the models the installed
 `agy` offers, in its own order, and sets the host posture (checked against that list before it writes).
 
 ## Usage
@@ -88,7 +88,7 @@ can ride passthrough (`-- --output-format json`) but this wrapper adds no parsin
 you need structure, ask for Markdown with explicit headings and validate it yourself. (The `review`
 role is the one that adopted the JSON envelope — see below.) Wrapper inputs: first argument is the
 prompt (`text`, `-` for stdin, or `@file`);
-`AGY_MODEL` (default `Gemini 3.8 Flash (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
+`AGY_MODEL` (default `posture.model` in the bridge's `capability.json`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
 `AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
 after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
 
@@ -179,7 +179,7 @@ release). `agy-review … --nonce <n>` is the plain-argument equivalent
 (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane
 for hosts whose dispatch policy has no env-prefix form.
 
-The review runs on the host posture (the `AGY_MODEL` setting, else `Gemini 3.8 Flash (High)`),
+The review runs on the host posture (the `AGY_MODEL` setting, else `posture.model` in the bridge's `capability.json`),
 checked once per run against `agy models`; `AGY_PROBE=1` is the one route to a one-off model, and a
 probe review never attests. An oversized `code` review is **DELIVERED, not refused**: the
 change set is cut into under-cap parts, fed over continuation turns and reviewed in a final turn, and

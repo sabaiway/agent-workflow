@@ -449,15 +449,16 @@ describe('agy.sh — bridge settings file (bridges 2.3.0)', { concurrency: true 
 
 // ── the wrapper's OWN default model (fork (a), round-1 council F3) ────────────────
 describe('agy.sh — default model pin', () => {
-  it('absent AGY_MODEL → the stub argv carries --model Gemini 3.8 Flash (High)', () => {
+  it('absent AGY_MODEL → the stub argv carries --model and the manifest default', () => {
     const home = makeSandbox(ARGV_STUB);
     const argvFile = join(home, 'argv.txt');
     const r = runWrapper(home, { AGY_STUB_ARGV: argvFile });
     const argv = readFileSync(argvFile, 'utf8');
     rmSync(home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(argv, /^--model$/m, 'the default run passes --model');
-    assert.match(argv, /^Gemini 3\.8 Flash \(High\)$/m, 'the wrapper default is the probed display string');
+    const lines = argv.split('\n');
+    assert.ok(lines.includes('--model'), 'the default run passes --model');
+    assert.equal(lines[lines.indexOf('--model') + 1], MANIFEST.posture.model, 'the wrapper default is the manifest display string');
   });
 
   it("explicit AGY_MODEL='' drops --model entirely (settings.json takes over)", () => {

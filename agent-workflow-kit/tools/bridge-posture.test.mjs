@@ -5,12 +5,14 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { posturesByBackend } from './bridge-posture.mjs';
 import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { composeConfiguredPosture } from './recipes.mjs';
+
+const AGY_MODEL = JSON.parse(readFileSync(new URL('../bridges/antigravity-cli-bridge/capability.json', import.meta.url), 'utf8')).posture.model;
 
 let tmp;
 beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), 'awf-bp-')); });
@@ -27,7 +29,7 @@ const rendered = (settings) => Object.fromEntries(Object.entries(posturesByBacke
 
 describe('the posture render overlays a set model and effort — spec:bridge-settings/S9', () => {
   it('nothing set: the manifest defaults, unchanged', () => {
-    assert.deepEqual(rendered(snapshot()), { codex: 'model=gpt-6.2-sol effort=high tier=standard', agy: 'model=Gemini 3.8 Flash (High)' });
+    assert.deepEqual(rendered(snapshot()), { codex: 'model=gpt-6.2-sol effort=high tier=standard', agy: `model=${AGY_MODEL}` });
   });
 
   it('a file model and effort name setting', () => {
@@ -57,7 +59,7 @@ describe('the posture render overlays a set model and effort — spec:bridge-set
 
   it('the recipes and status-line render composes the overlay', () => {
     assert.equal(composeConfiguredPosture({ settings: snapshot('CODEX_EFFORT=medium\n') }),
-      'codex model=gpt-6.2-sol effort=medium (setting) tier=standard · agy model=Gemini 3.8 Flash (High)');
+      `codex model=gpt-6.2-sol effort=medium (setting) tier=standard · agy model=${AGY_MODEL}`);
   });
 
   it('the render runs no catalog command', () => {

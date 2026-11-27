@@ -10,9 +10,13 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeConfiguredPosture } from '../tools/recipes.mjs';
+import * as syncMirrors from '../../scripts/sync-mirrors.mjs';
+import { AGY_MANIFEST_REL, AGY_POSTURE_ROWS, AGY_READER_BEGIN, AGY_MODEL_CONSTANT, LEGACY_AGY_MODEL_CONSTANT } from '../../scripts/sync-mirrors-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
+const AGY_ASSIGNMENT_RE = new RegExp(`${AGY_MODEL_CONSTANT}\\+?=`, 'g');
+const AGY_POSTURE_READ = `aw_read_posture AGY_MODEL "$${AGY_MODEL_CONSTANT}" ""`;
 
 const shellDefault = (src, name) => {
   const m = src.match(new RegExp(`^${name}="([^"]*)"`, 'm'));
@@ -23,12 +27,27 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
   const label = base === ROOT ? 'root' : 'kit bundle';
 
   describe(`posture pins ⟷ wrapper defaults (${label})`, () => {
-    it('agy: manifest posture.model === DEFAULT_AGY_REVIEW_MODEL; no effort/tier (agy has no tier)', () => {
-      const manifest = JSON.parse(readFileSync(join(base, 'antigravity-cli-bridge', 'capability.json'), 'utf8'));
-      const src = readFileSync(join(base, 'antigravity-cli-bridge', 'bin', 'agy-review.sh'), 'utf8');
+    it('agy: each generated region equals the manifest render, above the shared reader, with one assignment', () => {
+      const manifest = JSON.parse(readFileSync(join(base, AGY_MANIFEST_REL), 'utf8'));
       assert.ok(manifest.posture, 'the agy manifest declares the posture block');
-      assert.equal(manifest.posture.model, shellDefault(src, 'DEFAULT_AGY_REVIEW_MODEL'));
       assert.deepEqual(Object.keys(manifest.posture), ['model'], 'agy declares exactly {model}');
+      assert.equal(typeof syncMirrors.renderPostureDefaults, 'function', 'renderPostureDefaults export is absent');
+      for (const row of AGY_POSTURE_ROWS) {
+        const src = readFileSync(join(base, row.wrapper), 'utf8');
+        const lines = src.split('\n');
+        const region = syncMirrors.renderPostureDefaults(row, manifest.posture).split('\n');
+        const begin = region[0];
+        const end = region.at(-1);
+        assert.equal(lines.filter((line) => line === begin).length, 1, row.wrapper);
+        assert.equal(lines.filter((line) => line === end).length, 1, row.wrapper);
+        const start = lines.indexOf(begin);
+        assert.deepEqual(lines.slice(start, start + region.length), region, row.wrapper);
+        assert.ok(lines.indexOf(end) < lines.indexOf(AGY_READER_BEGIN), row.wrapper);
+        assert.equal([...src.matchAll(AGY_ASSIGNMENT_RE)].length, 1, row.wrapper);
+        assert.ok(region[1].startsWith(`${AGY_MODEL_CONSTANT}=`), row.wrapper);
+        assert.ok(!src.includes(LEGACY_AGY_MODEL_CONSTANT), row.wrapper);
+        assert.ok(lines.includes(AGY_POSTURE_READ), row.wrapper);
+      }
     });
 
     it('codex: manifest posture {model, effort, tier:null} === the wrapper defaults (standard tier)', () => {
@@ -45,7 +64,8 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
     it('the kit RENDER composes exactly the manifest pins (+ the bridge-settings tier overlay) — spec:bridge-model/S16', () => {
       const bundleRoot = base === ROOT ? join(ROOT, 'agent-workflow-kit', 'bridges') : base;
       const rendered = composeConfiguredPosture({ bundleRoot, settings: { active: [] } });
-      assert.equal(rendered, 'codex model=gpt-6.2-sol effort=high tier=standard · agy model=Gemini 3.8 Flash (High)');
+      const agyModel = JSON.parse(readFileSync(join(bundleRoot, AGY_MANIFEST_REL), 'utf8')).posture.model;
+      assert.equal(rendered, `codex model=gpt-6.2-sol effort=high tier=standard · agy model=${agyModel}`);
       const fast = composeConfiguredPosture({
         bundleRoot,
         settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file', bridge: 'codex-cli-bridge' }] },

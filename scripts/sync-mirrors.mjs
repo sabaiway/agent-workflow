@@ -3,7 +3,8 @@
 // families, the generator of each canon bridge's service-facts.txt (spec kit/services), which
 // runs first so the bridge mirror carries the fresh file, of the bundled gate hook's generated
 // region (spec kit/install/init-project, part gate-hook-lists) and of the bundled stage write guard's
-// (spec kit/stage-write-guard) (repo-local, tracked; repo-only tooling — never shipped in any tarball).
+// (spec kit/stage-write-guard), and of the agy wrappers' posture-defaults regions (spec bridges/bridge-model)
+// (repo-local, tracked; repo-only tooling — never shipped in any tarball).
 //
 // The kit ships byte-identical MIRROR copies of content whose canon lives elsewhere in the
 // monorepo. Three test files DETECT drift of the first three (bridges-mirror.test.mjs,
@@ -37,8 +38,8 @@
 // touch the real tree; scripts/release/version-sync.mjs --bump reuses syncBridgeMirror after a
 // bridge bump. Dependency-free, Node >= 22. No side effects on import.
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSync, chmodSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
-import { join, resolve, dirname, basename } from 'node:path';
+import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, lstatSync, copyFileSync, chmodSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
+import { join, resolve, dirname, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadServiceFragments, mergeServices, renderServiceFacts, SERVICE_FACTS_FILE } from '../agent-workflow-kit/tools/services/index.mjs';
 import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
@@ -52,7 +53,8 @@ export const fail = (exitCode, message) => Object.assign(new Error(message), { e
 
 // ── the mirror manifest ───────────────────────────────────────────────────────────────
 
-export const BRIDGE_DIRS = Object.freeze(['codex-cli-bridge', 'antigravity-cli-bridge', 'typesafe-jev-bridge']);
+const AGY_BRIDGE = 'antigravity-cli-bridge';
+export const BRIDGE_DIRS = Object.freeze(['codex-cli-bridge', AGY_BRIDGE, 'typesafe-jev-bridge']);
 
 const MEMORY_DIR = 'agent-workflow-memory';
 const KIT_DIR = 'agent-workflow-kit';
@@ -66,6 +68,12 @@ const GATE_HOOK_LISTS_END = '// end of the generated lists';
 const STAGE_GUARD_REL = `${KIT_DIR}/references/hooks/stage-write-guard.mjs`;
 const STAGE_GUARD_LOCATIONS_BEGIN = '// generated from agent-workflow-memory/references/scripts/shared/locations.mjs and agent-workflow-kit/tools/stage-render/ (index.mjs, stages.json) by scripts/sync-mirrors.mjs; do not edit';
 const STAGE_GUARD_LOCATIONS_END = '// end of the generated locations';
+const POSTURE_DEFAULTS_BEGIN = '# generated from capability.json posture by scripts/sync-mirrors.mjs; do not edit';
+const POSTURE_DEFAULTS_END = '# end of the generated posture defaults';
+const POSTURE_DEFAULT_ROWS = Object.freeze(['agy.sh', 'agy-review.sh'].map((name) => Object.freeze({
+  bridge: AGY_BRIDGE, wrapper: join(AGY_BRIDGE, 'bin', name), constant: 'DEFAULT_AGY_MODEL', slot: 'model',
+})));
+const INVALID_POSTURE_VALUE = /['\p{Cc}]/u;
 // The prune both installers take (spec upgrade-delivery, part payload-prune): one canon, one kit copy.
 const PRUNE_CANON = `${MEMORY_DIR}/bin/payload-prune.mjs`;
 const PRUNE_COPY = `${KIT_DIR}/tools/payload-prune.mjs`;
@@ -145,8 +153,9 @@ const planTreeSync = (root, canonRel, mirrorRel, pending = []) => {
     throw fail(1, `canon dir is missing: ${canonRel} — refusing to sync (a missing canon is never an empty canon)`);
   }
   const mirrorRoot = join(root, mirrorRel);
-  const generatedFiles = pending.filter((change) => dirname(change.to) === canonRoot)
-    .map((change) => basename(change.to));
+  const generatedFiles = pending.filter((change) => change.action === 'write')
+    .map((change) => relative(canonRoot, change.to))
+    .filter((rel) => rel && !isAbsolute(rel) && rel.split(sep)[0] !== '..');
   const canonFiles = [...new Set([...walkFiles(canonRoot), ...generatedFiles])].sort();
   const canonSet = new Set(canonFiles);
   const changes = [];
@@ -200,18 +209,20 @@ const planFileSync = (root, canonRel, mirrorRel) => {
   return { changes: [{ action: 'copy', rel: mirrorRel, from: canonPath, to: mirrorPath }], identical: 0 };
 };
 
+const readCanonManifest = (manifestPath) => {
+  try {
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(manifestPath)));
+  } catch (error) {
+    throw fail(1, `${manifestPath}: cannot read or parse canon manifest: ${error.message}`);
+  }
+};
+
 const planServiceFacts = (root) => {
   const fragments = loadServiceFragments({ servicesDir: join(root, KIT_DIR, SERVICES_REL) });
   const changes = BRIDGE_DIRS.flatMap((bridge) => {
     const manifestPath = join(root, bridge, MANIFEST_FILE);
-    const manifest = (() => {
-      try {
-        return JSON.parse(readFileSync(manifestPath, 'utf8'));
-      } catch (error) {
-        throw fail(1, `${manifestPath}: cannot read or parse canon manifest: ${error.message}`);
-      }
-    })();
-    if (!Array.isArray(manifest.services)) throw fail(1, `${manifestPath}: the canon manifest names no services list`);
+    const manifest = readCanonManifest(manifestPath);
+    if (!Array.isArray(manifest?.services)) throw fail(1, `${manifestPath}: the canon manifest names no services list`);
     const content = renderServiceFacts(mergeServices(manifest.services, fragments));
     const rel = join(bridge, SERVICE_FACTS_FILE);
     const to = join(root, rel);
@@ -246,11 +257,19 @@ const renderStageGuardLocations = (locations, stage) => [
   STAGE_GUARD_LOCATIONS_END,
 ].join('\n');
 
-const planGeneratedRegion = (root, rel, begin, end, render) => {
+const readRegularWrapper = (root, rel) => {
+  const directories = rel.split(sep).slice(0, -1);
+  const to = join(root, rel);
+  if (directories.every((_, index) => lstatSync(join(root, ...directories.slice(0, index + 1))).isDirectory())
+      && lstatSync(to).isFile()) return readFileSync(to);
+  throw new Error('expected a regular wrapper without symbolic links in its path');
+};
+
+const planGeneratedRegion = (root, rel, begin, end, render, read = readFileSync, admit = () => true) => {
   const to = join(root, rel);
   const hook = (() => {
     try {
-      return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(to)) };
+      return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(read(to)) };
     } catch (error) {
       return { error };
     }
@@ -258,14 +277,15 @@ const planGeneratedRegion = (root, rel, begin, end, render) => {
   const lines = hook.text?.split('\n') ?? [];
   const beginLines = lines.flatMap((line, index) => line === begin ? [index] : []);
   const endLines = lines.flatMap((line, index) => line === end ? [index] : []);
-  if (typeof hook.text === 'string' && beginLines.length === 1 && endLines.length === 1 && endLines[0] > beginLines[0]) {
+  if (typeof hook.text === 'string' && beginLines.length === 1 && endLines.length === 1 && endLines[0] > beginLines[0]
+      && admit(lines.slice(beginLines[0] + 1, endLines[0]))) {
     const first = beginLines[0];
     const afterEnd = endLines[0] + 1;
     if (lines.slice(first, afterEnd).join('\n') === render) return { changes: [], identical: 1 };
     const content = [...lines.slice(0, first), render, ...lines.slice(afterEnd)].join('\n');
     return { changes: [{ action: 'write', rel, to, content }], identical: 0 };
   }
-  throw fail(1, `${rel}: refusing to sync: ${hook.error?.message ?? 'expected exactly one begin line and one later end line'}`);
+  throw fail(1, `${rel}: refusing to sync: ${hook.error?.message ?? 'expected exactly one begin line and one later end line enclosing a valid region'}`);
 };
 
 const planGateHookLists = (root) => planGeneratedRegion(root, GATE_HOOK_REL, GATE_HOOK_LISTS_BEGIN, GATE_HOOK_LISTS_END,
@@ -285,6 +305,30 @@ const planStageGuardLocations = (root) => planGeneratedRegion(root, STAGE_GUARD_
     STAGE_RECORD_BASENAME, SLOT_FILE_NAME, RENDER_LINE: composeRenderLine(`${PLANS}/${SLOT_FILE_NAME}`), STAGE_IDS: readStageIds(root),
   }));
 
+export const renderPostureDefaults = (row, posture) => [
+  POSTURE_DEFAULTS_BEGIN,
+  `${row.constant}='${posture[row.slot]}'`,
+  POSTURE_DEFAULTS_END,
+].join('\n');
+
+const planPostureDefaults = (root) => {
+  const manifests = new Map([...new Set(POSTURE_DEFAULT_ROWS.map((row) => row.bridge))]
+    .map((bridge) => [bridge, readCanonManifest(join(root, bridge, MANIFEST_FILE))]));
+  const plans = POSTURE_DEFAULT_ROWS.map((row) => {
+    const posture = manifests.get(row.bridge)?.posture;
+    const value = posture?.[row.slot];
+    if (typeof value === 'string' && value.length > 0 && value.isWellFormed()
+        && !INVALID_POSTURE_VALUE.test(value) && value.trim() === value) {
+      const assignment = new RegExp(`^${row.constant}='[^']*'$`);
+      return planGeneratedRegion(root, row.wrapper, POSTURE_DEFAULTS_BEGIN, POSTURE_DEFAULTS_END,
+        renderPostureDefaults(row, posture), () => readRegularWrapper(root, row.wrapper),
+        (lines) => lines.length === 1 && assignment.test(lines[0]));
+    }
+    throw fail(1, `${join(row.bridge, MANIFEST_FILE)}: refusing to sync: invalid posture.${row.slot}`);
+  });
+  return { changes: plans.flatMap((plan) => plan.changes), identical: plans.reduce((sum, plan) => sum + plan.identical, 0) };
+};
+
 // All families, in canonical order → [{ family, changes, identical }].
 export const planAllMirrors = (root) => {
   const facts = planServiceFacts(root);
@@ -292,9 +336,11 @@ export const planAllMirrors = (root) => {
     { family: 'service-facts', ...facts },
     { family: 'gate-hook-lists', ...planGateHookLists(root) },
     { family: 'stage-guard-locations', ...planStageGuardLocations(root) },
+    { family: 'posture-defaults', ...planPostureDefaults(root) },
   ];
+  const pending = plans.flatMap((plan) => plan.changes);
   for (const bridge of BRIDGE_DIRS) {
-    plans.push({ family: `bridge:${bridge}`, ...planTreeSync(root, bridge, join(KIT_DIR, 'bridges', bridge), facts.changes) });
+    plans.push({ family: `bridge:${bridge}`, ...planTreeSync(root, bridge, join(KIT_DIR, 'bridges', bridge), pending) });
   }
   plans.push({ family: 'reference-scripts', ...planTreeSync(root, join(MEMORY_DIR, SCRIPTS_REL), join(KIT_DIR, SCRIPTS_REL)) });
   plans.push({ family: 'templates', ...planTemplatesSync(root) });
