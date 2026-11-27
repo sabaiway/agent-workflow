@@ -410,7 +410,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [41110, 'd2f49fe3dcb089f8593e8dbda7e0a85f7b68a7e55b42956ec6e9454c08daf2f9'], 'the bytes after EVERY-LOCATION-IS-NAMED-ONCE story S4 (the enforcement-script ensure writes each file after its imports)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [41259, '7b34fa54ecfc15b199679304f63ffe87b08a9ba4a24d2c07dd429cc9d8219c00'], 'the bytes after CODE-RULES-ARE-THIN-AND-THEIR-MERGE-UNCHECKED story S1 (the project-rules paragraph names the unproved-merge rerun and the what-changed list)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);

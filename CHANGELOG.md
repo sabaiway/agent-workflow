@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-27 — AD-243: the upgrade's rules merge is proved rule by rule, its fates are recorded and shown, and the refusal names the rule (kit 24.2.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/project-rules/rules-check.mjs`** exports `readRuleUnits` (the paragraphs and list items
+of a rules file, labelled `K`, `L`, `E`, and the kit headings `KH`) and `proveMerge` (the kit headings claimed as a
+skeleton, each kit unit claimed in order under its heading, each local unit claimed, every effective unit accounted
+for, and the agent's fates checked); `parseRecord` reads schemas 1 and 2, and `judgeTheme` adds the states
+`not-laid` (a kit-homed theme with no file and no entry) and `unproved-merge` (an entry recorded with its fates whose digests match but whose proof fails, or, with no local
+file, whose effective file carries no frontmatter).
+**`rules-record.mjs`** writes schema 2 with the proof's fates, carries schema-1 entries unchanged, refuses
+`unproved-merge` and `fate-without-local`, and retires `effective-equals-input`. **`rules-cli.mjs`** takes `--fate`
+repeated under `--record`, prints the what-changed list and, on `unproved-merge`, the proof's lines. **`rules-ensure.mjs`**
+treats a merge as recorded only on an entry recorded with its fates whose proof holds, so for a theme whose template
+is supplied a legacy entry with a local file is `pending`. **`references/modes/rules.md`** step 3 and its stop, and **`references/modes/upgrade.md`**'s project-rules
+paragraph, name the fates, the rerun on `unproved-merge` and the what-changed list. The project-rules suites, the
+harness, `git-hooks.test.mjs` (S60), the language contract's gap-screen pin, the router budget `routerPlusMode`
+53248 -> 54272 and its copy in `advisor-skip/skip.test.mjs` follow. Specs `kit/project-rules` revision 16 and
+`kit/tier/checker-gates` revision 5. New debt rows RULES-MODE-SIZE-ROUTE-RUNS-THE-RULES-ENSURE-FIRST,
+RULES-CHECK-HOLDS-THE-PROOF-AND-THE-VERDICTS-IN-ONE-FILE and PROOF-READER-LINE-STRIPS-THE-SHARED-READER-ADVICE-BY-ITS-WORDING.
+
 ## 2026-11-27 — AD-242: the agy bridge runs Gemini 4 Hydrogen (High) by default, set in its manifest, and the wrappers' constants are generated from it (agy bridge 8.1.0 MINOR, kit 24.1.0 MINOR; memory, engine, codex and the judge unchanged)
 
 **`antigravity-cli-bridge/capability.json`** names `Gemini 4 Hydrogen (High)` in `posture.model` and as the

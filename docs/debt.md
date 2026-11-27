@@ -3,6 +3,32 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **RULES-MODE-SIZE-ROUTE-RUNS-THE-RULES-ENSURE-FIRST** — invariant: a request that only changes a size limit writes
+  no rules file and no rules record. Origin: `agent-workflow-kit/references/modes/rules.md:9` (step 1 runs the
+  `--only rules` ensure before any route) against `:16` (the size route ends with no merge or record), so a kit file
+  the opening ensure refreshes beside a local file leaves a merge pending that the route never finishes. Pre-existing
+  since the size route was added; story S1 of CODE-RULES-ARE-THIN-AND-THEIR-MERGE-UNCHECKED makes it no worse (a
+  pending theme writes no record). Direction: the mode picks the size route before the opening ensure. Residual: the
+  opening ensure replaces any differing kit body, so the size route can leave a merge pending even without a new
+  release; the next upgrade's rules ensure answers pending for it, and the check stops on it only where a digest
+  moved.
+
+- **RULES-CHECK-HOLDS-THE-PROOF-AND-THE-VERDICTS-IN-ONE-FILE** — invariant: one concern per file, its suite beside
+  it. Origin: `agent-workflow-kit/tools/project-rules/rules-check.mjs` holds the record reader and the verdicts and,
+  from revision 16 of the project-rules contract, the rule-unit reader and the merge proof; its paired
+  `rules-check.test.mjs` stands at 575 lines, a recorded size exception (CODE-RULES S1). Direction: the unit reader
+  and the proof move to a module of their own behind `rules-check.mjs`'s exports, their S41-S43 cells with them; a
+  new module is a contract change, so it rides the spec review of a later story of
+  CODE-RULES-ARE-THIN-AND-THEIR-MERGE-UNCHECKED. Residual: none live; the size record holds the file at 575.
+
+- **PROOF-READER-LINE-STRIPS-THE-SHARED-READER-ADVICE-BY-ITS-WORDING** — invariant: the merge proof's refusal
+  carries no advice, and no module copies another's message text. Origin:
+  `agent-workflow-kit/tools/project-rules/rules-check.mjs:171` cuts the reason of `tokenizeMarkdown`
+  (`agent-workflow-kit/references/scripts/shared/markdown-blocks.mjs:85`, `:129`) at its literal ` Separate them:`
+  and ` Close it with`, so a rewording there leaks the reader's advice into the `reader` line, and the S43 cell's
+  no-advice pattern names neither word. Direction: the shared reader states its fact and its remedy apart (a field
+  of the error it throws), and the proof names the fact only. Residual: none live; today's two messages are cut.
+
 - **POSTURE-SETTING-DEFAULT-DERIVES-FROM-THE-POSTURE-BLOCK** — invariant: a bridge's posture default is written once
   in its manifest. Origin: `antigravity-cli-bridge/capability.json:8` (`posture.model`) and `:214`
   (`settings[AGY_MODEL].default`) hold the same value, as do the codex and judge manifests. Narrow fix, shipped with
@@ -1385,7 +1411,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **ROUTER-BUDGET-LITERALS-COPIED-IN-THE-RECOMMENDATIONS-SUITE** — invariant: each router byte budget is written once,
   in `BUDGET` of `agent-workflow-kit/test/router-contract.test.mjs`. Origin:
   `agent-workflow-kit/test/recommendations-language-contract.test.mjs:775,858,915,976,1220` copy 52224, so a
-  documented bump of `routerPlusMode` leaves five stale pins. Narrow fix: move `BUDGET` into a small data module both
+  documented bump of `routerPlusMode` leaves five stale pins; `agent-workflow-kit/tools/advisor-skip/skip.test.mjs:63`
+  copies `routerPlusMode` itself (CODE-RULES S1 found it red on its bump and rewrote it to 54272). Narrow fix: move `BUDGET` into a small data module both
   suites import, and read it there. Raised by the S3 spec review (orchestrator self-review).
 - **SPEC-STORE-REFUSAL-WRITES-NOTHING-UNPINNED** — invariant: a `--write-baseline` run that meets a spec store present
   but not a directory refuses, exit 1, and leaves the config byte-unchanged. Origin: spec source-size S29 (revision 3)

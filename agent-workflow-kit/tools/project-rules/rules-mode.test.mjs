@@ -49,11 +49,16 @@ describe('spec:project-rules/S31 the rules mode doc changes the local file on a 
     assertPhrases(row, ['and checks it is current. It also drops your local rules on request.'], 'the README rules row');
   });
 
-  it('merges and records on pending, and stops with nothing further written on failed or a non-zero record command', () => {
-    assertPhrases(readRules(), [
-      '**3. After each of the two rules routes, run the ensure again.** On `pending`, do the merge its line states, show the user what changed in the final rules, then run the record command the line prints with the sha256 of the merged file',
-      'When an ensure run answers `failed`, the record command exits non-zero, or the `--override` command exits non-zero, relay the line and stop: write, delete and record nothing further, and run no closing check as if the change held.',
-    ], 'the pending and refusal steps');
+  it('merges and records on pending, reruns on an unproved-merge refusal until it records or repeats, shows the what-changed list, and stops with nothing further written on failed, another refusal or a repeated one', () => {
+    const rules = readRules();
+    assertPhrases(rules, [
+      '**3. After each of the two rules routes, run the ensure again.** On `pending`, do the merge its line states, then run the record command the line prints with the sha256 of the merged file',
+      'On an `unproved-merge` refusal, fix the merge or its fates and run the command again, until it records or refuses exactly as the run before.',
+      "adding one `--fate` for each kit rule the merged file does not hold word for word under its kit heading and in the kit's order, and for each local rule it does not hold word for word as a rule of its own.",
+      'show the user the what-changed list the command prints',
+      'When an ensure run answers `failed`, the record command exits non-zero with any condition but `unproved-merge` or refuses exactly as the run before, or the `--override` command exits non-zero, relay the line and stop: write, delete and record nothing further, and run no closing check as if the change held.',
+    ], 'the pending, rerun and refusal steps');
+    assert.equal(rules.includes('show the user what changed in the final rules'), false, 'the what-changed list the command prints replaces the agent-written summary');
   });
 
   it('ends with the --only index run and the --check run answering current, and states what it never does', () => {
@@ -83,12 +88,12 @@ describe('spec:project-rules/S34 the rules mode routes a number to the size chec
     assertPhrases(readRules(), [
       '\n**2. Do what the user asks — one of three.**\n',
       '\n**3. After each of the two rules routes, run the ensure again.**',
-      '**It stops on a refusal.** When an ensure run answers `failed`, the record command exits non-zero, or the `--override` command exits non-zero, relay the line and stop',
+      '**It stops on a refusal.** When an ensure run answers `failed`, the record command exits non-zero with any condition but `unproved-merge` or refuses exactly as the run before, or the `--override` command exits non-zero, relay the line and stop',
     ], 'the step headers and the stop');
   });
 });
 
-const PROJECT_RULES_PARAGRAPH = "**What the project-rules ensure does.** Each theme's kit file `docs/ai/rules/<theme>.md` is seeded, refreshed from a body a release shipped, and any other body replaced by the template with no question and no copy kept, its line naming the local rules file `docs/ai/rules/local/<theme>.md` for a rule meant to last; with no local file its effective copy and record are rebuilt. With a local file it writes neither: `pending` prints the merge to do and its record command — do the merge, show the user what changed, then run that command.";
+const PROJECT_RULES_PARAGRAPH = "**What the project-rules ensure does.** Each theme's kit file `docs/ai/rules/<theme>.md` is seeded, refreshed from a body a release shipped, and any other body replaced by the template with no question and no copy kept, its line naming the local rules file `docs/ai/rules/local/<theme>.md` for a rule meant to last; with no local file its effective copy and record are rebuilt. With a local file it writes neither: `pending` prints the merge to do and its record command — do the merge and run that command; on an `unproved-merge` refusal, fix the merge or its fates and run it again, until it records or refuses exactly as the run before; show the user the what-changed list it prints.";
 const RULES_TOKEN_ARM = '; rules → `seeded` / `refreshed` / `regenerated` / `pending` / `already-current`; index → ';
 const WRITTEN_OVER = 'written over by the next upgrade with no question and no copy kept';
 

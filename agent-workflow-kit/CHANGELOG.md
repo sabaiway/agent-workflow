@@ -4,6 +4,30 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 24.2.0 — the upgrade's rules merge is proved rule by rule, and you see what it changed (AD-243)
+
+**When `/agent-workflow-kit upgrade` merges a kit rules file with your local rules file, no rule can be lost or
+reworded unseen any more.** Before, the merged file was recorded by its digests alone, so a merge that dropped a kit
+rule recorded and passed every check. Now `rules-cli.mjs --record` proves the merge: every kit rule (a paragraph or a
+list item) stands word for word under its kit heading and in the kit's order, every local rule stands word for word,
+and every rule of the merged file is accounted for.
+
+- **A rule the merge changes carries its fate.** The agent adds one `--fate` per kit rule the merged file does not
+  hold word for word under its kit heading and in the kit's order, and per local rule it does not hold word for word as
+  a rule of its own: `K<n> replaced-by L<m>`, `K<n> rewritten-as E<m> because-of L<k>` or
+  `L<n> folded-into E<m>`. On success the command prints the what-changed list, and the agent shows it to you.
+- **When the proof fails, the record command refuses the merge as `unproved-merge`,** with the rule that failed and the numbered rules of the
+  three files, and nothing is written; the agent fixes the merge or its fates and runs the command again.
+- **Once after this upgrade, every rules theme with a local file and a supplied template answers `pending`** (for
+  the engine's `lens`, once an installed engine supplies it), because its record was written
+  by an earlier kit: the agent redoes that merge and records it with its fates. Until then your existing record still
+  passes `--check` and the commit hook. The record moves to schema 2, which a kit earlier than 24.2.0 refuses, so
+  upgrade every machine of a project together.
+- **`--check` reruns the proof on every merge recorded with its fates whose digests still match** (a merge an
+  earlier kit recorded is judged by its digests until the agent records it again), and a rules theme the kit itself lays (every theme but the engine's
+  `lens`) with no file and no record entry now answers `record (not-laid)` instead of `absent`: run the upgrade to lay
+  it. The verdict words and what each exit code means are unchanged.
+
 ## 24.1.0 — agy runs Gemini 4 Hydrogen (High) by default, set in its manifest (AD-242)
 
 **After `/agent-workflow-kit upgrade` (or `init`), a host that sets no agy model runs `agy-run` and `agy-review` on

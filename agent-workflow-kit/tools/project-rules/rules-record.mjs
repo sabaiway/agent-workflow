@@ -6,7 +6,7 @@ import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeDocsAiFileAtomic } from '../atomic-write.mjs';
 import { parseFrontmatter } from '../../references/scripts/docs-size/index.mjs';
-import { digestOf, readRecord, readUnder } from './rules-check.mjs';
+import { digestOf, proveMerge, readRecord, readUnder, RECORD_SCHEMA } from './rules-check.mjs';
 import { RECORD_PATH, THEMES, themePaths } from './themes.mjs';
 
 const ROLES = ['kit', 'local', 'effective'];
@@ -54,25 +54,28 @@ const judge = (root, theme, passed, deps) => {
   if ((local !== undefined) !== (passed.local !== 'absent')) {
     return fail('local-presence', `${paths.local} ${local === undefined ? 'is absent' : 'exists'} while the passed local is ${passed.local}`);
   }
+  const fates = passed.fates === undefined ? [] : passed.fates;
   if (local !== undefined) {
     if (digestOf(local) !== passed.local) return fail('local-moved', `${paths.local} no longer hashes to the passed local digest`);
-    if (effective.equals(kit) || effective.equals(local)) return fail('effective-equals-input', `${paths.effective} equals one of its inputs, so no merge was written`);
-  } else if (!effective.equals(kit)) {
-    return fail('effective-differs-from-kit', `with no local file ${paths.effective} must equal ${paths.kit}`);
+    const proof = proveMerge({ kit: kit.toString('utf8'), local: local.toString('utf8'), effective: effective.toString('utf8'), fates });
+    if (!proof.ok) return fail('unproved-merge', proof.lines.join('\n'));
+    return { ok: true, themes: kept, fates: proof.fates, changes: proof.changes };
   }
-  return { ok: true, themes: kept };
+  if (!effective.equals(kit)) return fail('effective-differs-from-kit', `with no local file ${paths.effective} must equal ${paths.kit}`);
+  if (!Array.isArray(fates) || fates.length !== 0) return fail('fate-without-local', 'a fate is given with no local file');
+  return { ok: true, themes: kept, fates, changes: ['the effective file is the kit file word for word'] };
 };
 
-// writeRecord(root, theme, passed, deps?) → { ok: true, path, entry } | { ok: false, condition, message }.
+// writeRecord(root, theme, passed, deps?) → { ok: true, path, entry, changes } | { ok: false, condition, message }.
 export const writeRecord = (root, theme, passed, deps = {}) => {
   const judged = judge(root, theme, passed, deps);
   if (!judged.ok) return judged;
-  const entry = { kit: passed.kit, local: passed.local, effective: passed.effective };
-  const body = `${JSON.stringify({ schema: 1, themes: { ...judged.themes, [theme]: entry } }, null, 2)}\n`;
+  const entry = { kit: passed.kit, local: passed.local, effective: passed.effective, fates: judged.fates };
+  const body = `${JSON.stringify({ schema: RECORD_SCHEMA, themes: { ...judged.themes, [theme]: entry } }, null, 2)}\n`;
   try {
     (deps.write ?? writeDocsAiFileAtomic)(root, RECORD_PATH, body);
   } catch (err) {
     return { ok: false, condition: 'write', message: String(err?.message ?? err) };
   }
-  return { ok: true, path: RECORD_PATH, entry };
+  return { ok: true, path: RECORD_PATH, entry, changes: judged.changes };
 };

@@ -196,7 +196,8 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 53248, // 52224 → 53248 (52 KB): router + any single mode file. Project-rules story S3 — the rules mode header lands in the router and references/modes/upgrade.md gains the Memory Map row and rules-mode words.
+  routerPlusMode: 54272, // 53248 → 54272 (53 KB): router + any single mode file. Story S1 of CODE-RULES-ARE-THIN-AND-THEIR-MERGE-UNCHECKED — upgrade.md's project-rules paragraph names the unproved-merge rerun and the what-changed list (+149 B).
+  // Measured 53391 B (router 12086 + upgrade 41305), 143 B over the 53248 ceiling; 881 B of headroom — one documented KB-multiple bump. History: 52224 → 53248 (52 KB): project-rules story S3 — the rules mode header lands in the router and references/modes/upgrade.md gains the Memory Map row and rules-mode words.
   // Measured 52573 B (router 12213 + upgrade 40360), 349 B over the 52224 ceiling; 675 B of headroom — one documented KB-multiple bump. History: 51200 → 52224 (51 KB): Consumers epic story S6 — upgrade.md gains the `full-flow-profile` declaration (46 B), measured 51232 B.
   // History: 50176 → 51200 (50 KB): story S3 — references/modes/upgrade.md gains the `tier` run-list row and rationale block, hands the lens ask to it and names `tier` in the step-4/8 reports (+1138 B).
   // Measured 50971 B (router 11947 + upgrade 39024), 795 B over the 50176 ceiling; 229 B of headroom — one documented KB-multiple bump. History: 49152 → 50176 (49 KB): story S2 — the story-sessions outcome set in upgrade.md (+533 B), measured 49634 B.

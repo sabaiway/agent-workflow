@@ -13,7 +13,7 @@ import { ENSURE_IMPLEMENTATIONS, main } from '../ensure-configs.mjs';
 import { readFileBytesNoFollow } from '../fs-read-nofollow.mjs';
 import { shellQuoteArg } from '../repo-lex.mjs';
 import { ALARM_WORDS, INTERNAL_NAMES, hits } from '../../../scripts/testing/composed-lines-scan.mjs';
-import { EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, ONE_THEME, RECORD, THEME_NAMES, entryOf, load, makeEngine, makeProject, need, recordText, removeProject, sha, snapshot } from './rules-harness.test.mjs';
+import { EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_FATES, MERGED_TEXT, ONE_THEME, RECORD, THEME_NAMES, entryOf, legacyOf, load, makeEngine, makeProject, need, recordText, removeProject, sha, snapshot } from './rules-harness.test.mjs';
 
 const NL = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
@@ -53,7 +53,7 @@ const makeKit = () => makeTree('rules kit ', { 'references/rules/project-layout.
 
 const recordOf = (entry) => recordText({ [THEME]: entry });
 const COPY_ENTRY = entryOf({ kit: KIT_TEXT, effective: KIT_TEXT });
-const MERGE_ENTRY = entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT });
+const MERGE_ENTRY = entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT, fates: MERGED_FATES });
 const copyOf = (text) => ({ [KIT]: text, [EFFECTIVE]: text, [RECORD]: recordOf(entryOf({ kit: text, effective: text })) });
 const MERGED = { [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: MERGED_TEXT, [RECORD]: recordOf(MERGE_ENTRY) };
 const UNRECORDED = { [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: MERGED_TEXT };
@@ -209,6 +209,7 @@ const EDITED_UNDER_ITS_DIGEST = { ...withEntry({ kit: sha(EDITED) }), [KIT]: EDI
 const RECORDED_MERGE = `${EFFECTIVE}: already the recorded merge of ${KIT} and ${LOCAL} — nothing written`;
 const PENDING = [
   ['no record', { [KIT]: KIT_TEXT, ...UNRECORDED }, {}, KIT_TEXT, ''],
+  ['matching digests with unproved fates', withEntry({ fates: [] }), {}, KIT_TEXT, ''],
   ['an unreadable record', { ...MERGED, [RECORD]: NOT_JSON }, {}, KIT_TEXT, ''],
   ['an entry with a moved kit digest', withEntry({ kit: sha('another kit') }), {}, KIT_TEXT, ''],
   ['an entry with a moved local digest', withEntry({ local: sha('another local') }), {}, KIT_TEXT, ''],
@@ -222,9 +223,9 @@ const PENDING = [
   ['a dry run that would refresh the kit file: the template digest and the holds tail', { [KIT]: PRIOR, ...UNRECORDED }, { dryRun: true, deps: withPriors }, KIT_TEXT, HOLDS],
 ];
 
-describe('spec:project-rules/S20 with a local file a recorded merge, judged against the kit file as the run leaves it, writes no more than the kit file, and every other state is pending with one merge-needed line and the exact record command', () => {
+describe('spec:project-rules/S20 with a local file a proved recorded merge, judged against the kit file as the run leaves it, writes no more than the kit file, and every other state is pending with one merge-needed line and the exact record command', () => {
   for (const [label, files, first, token, moved] of [
-    ['a matching entry and a present effective file: nothing written', MERGED, KIT_EQUAL, 'already-current', []],
+    ['a matching proved entry and a present effective file: nothing written', MERGED, KIT_EQUAL, 'already-current', []],
     ['an edited kit file under an entry recording the template digest is the recorded merge: only the kit file written, token refreshed', { ...MERGED, [KIT]: EDITED }, REPLACED, 'refreshed', [KIT]],
   ]) {
     it(label, async () => {
@@ -389,5 +390,47 @@ describe('spec:project-rules/S25 bootstrap.md step 10 carries the --only rules r
     assert.ok(rerun !== -1 && step10.indexOf(RULES_RUN) < rerun, step10);
     assert.ok(step7.startsWith('7. **Fill templates**'), step7);
     assert.equal(step7.includes('--only rules'), false);
+  });
+});
+
+describe('spec:project-rules/S47 legacy records keep copies, reopen merges and migrate only on a write', () => {
+  it('a schema 1 copy is already-current with no write', async () => {
+    const run = await runEnsure({ files: { ...copyOf(KIT_TEXT), [RECORD]: recordText({ [THEME]: legacyOf(COPY_ENTRY) }, 1) } });
+    assert.equal(run.token, 'already-current');
+    run.unchanged();
+  });
+  for (const [schema, effective] of [[1, MERGED_TEXT], [2, KIT_TEXT + NL + 'Tests live in test/.' + NL]]) {
+    it('a legacy merge in schema ' + schema + ' is pending with no write', async () => {
+      const entry = legacyOf(entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective }));
+      const run = await runEnsure({ files: { ...MERGED, [EFFECTIVE]: effective, [RECORD]: recordText({ [THEME]: entry }, schema) } });
+      assert.deepEqual([run.token, run.lines], ['pending', [KIT_EQUAL, mergeLine(run, KIT_TEXT, '')]]);
+      run.unchanged();
+    });
+  }
+  it('an unsupplied lens legacy entry is carried unchanged on a project-layout write', async () => {
+    const engine = makeEngine({ lens: false });
+    [engine.dir, engine.home].forEach(track);
+    const lens = { name: 'lens', home: 'engine', template: 'references/rules/lens.md', readWhen: '**Before any code change**' };
+    const entry = legacyOf(entryOf({ kit: 'lens kit', effective: 'lens kit' }));
+    const run = await runEnsure({ files: { [RECORD]: recordText({ lens: entry }, 1) }, deps: () => ({ themes: [...ONE_THEME, lens], env: engine.env, home: engine.home }) });
+    assert.equal(run.token, 'seeded');
+    assert.deepEqual(JSON.parse(run.text(RECORD)), { schema: 2, themes: { lens: entry, [THEME]: COPY_ENTRY } });
+  });
+  it('a proved entry writes nothing', async () => {
+    const run = await runEnsure({ files: MERGED });
+    assert.deepEqual([run.token, run.lines], ['already-current', [KIT_EQUAL, RECORDED_MERGE]]);
+    run.unchanged();
+  });
+  it('after recording proving fates the op and check are current', async () => {
+    const run = await runEnsure({ files: { ...MERGED, [RECORD]: recordOf({ ...MERGE_ENTRY, fates: [] }) } });
+    assert.equal(run.token, 'pending');
+    const record = need(await load('./rules-cli.mjs'), 'main');
+    const out = record(['--record', '--theme', THEME, '--kit', sha(KIT_TEXT), '--local', sha(LOCAL_TEXT), '--effective', sha(MERGED_TEXT), '--cwd', run.root, ...MERGED_FATES.flatMap((fate) => ['--fate', fate])]);
+    assert.equal(out.code, 0, out.stderr);
+    const next = await runEnsure({ cwd: run.root, kitRoot: run.kitRoot });
+    assert.equal(next.token, 'already-current');
+    next.unchanged();
+    const checkRules = need(await load('./rules-check.mjs'), 'checkRules');
+    assert.equal(checkRules(run.root, { themes: ONE_THEME })[0].verdict, 'current');
   });
 });

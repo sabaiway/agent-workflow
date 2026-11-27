@@ -9,7 +9,7 @@ import { writeDocsAiFileAtomic, writeProjectFileCreateOnly } from '../atomic-wri
 import { detectEngine, readEngineFragment, resolveEngineDir } from '../engine-source.mjs';
 import { composeFailure, composeOutcome, tmpNote } from '../ensure-ops.mjs';
 import { shellQuoteArg } from '../repo-lex.mjs';
-import { digestOf, readRecord, readUnder } from './rules-check.mjs';
+import { digestOf, proveMerge, readRecord, readUnder } from './rules-check.mjs';
 import { writeRecord } from './rules-record.mjs';
 import { RULES_PRIORS, isKnownPrior } from './rules-priors.mjs';
 import { RECORD_PATH, THEMES, themePaths } from './themes.mjs';
@@ -94,12 +94,13 @@ const planTheme = ({ theme, paths, template, reads }, record, priors) => {
   const entry = record.ok ? record.themes[theme.name] : undefined;
   const base = { name: theme.name, paths, kitState, kitBytes: template, kitWrite, effectiveWrite: null, recordWrite: false };
   if (local.outcome === 'ok') {
-    const merged = entry !== undefined && effective.outcome === 'ok' && entry.kit === digestOf(template)
-      && entry.local === digestOf(local.bytes) && entry.effective === digestOf(effective.bytes);
+    const merged = entry !== undefined && Object.hasOwn(entry, 'fates') && effective.outcome === 'ok' && entry.kit === digestOf(template)
+      && entry.local === digestOf(local.bytes) && entry.effective === digestOf(effective.bytes)
+      && proveMerge({ kit: template.toString('utf8'), local: local.bytes.toString('utf8'), effective: effective.bytes.toString('utf8'), fates: entry.fates }).ok;
     return { ...base, mode: merged ? 'merged' : 'pending', localDigest: digestOf(local.bytes) };
   }
   const effectiveWrite = effective.outcome === 'absent' ? 'seed' : effective.bytes.equals(template) ? null : 'rebuild';
-  const passed = { kit: digestOf(template), local: 'absent', effective: digestOf(template) };
+  const passed = { kit: digestOf(template), local: 'absent', effective: digestOf(template), fates: [] };
   const recorded = entry !== undefined && entry.kit === passed.kit && entry.local === 'absent' && entry.effective === passed.effective;
   const droppedEdit = effectiveWrite === 'rebuild' && entry !== undefined && entry.effective !== digestOf(effective.bytes);
   return { ...base, mode: 'copy', effectiveWrite, recordWrite: effectiveWrite !== null || !recorded, passed, droppedEdit };

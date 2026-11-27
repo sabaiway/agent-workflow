@@ -544,7 +544,7 @@ describe('spec:init-project/S60 the --hook-checks dry run by proof on a temp git
     ['a custom installer', { installer: FOREIGN }, 0, BOTH],
     ['an armed rules line and a layout line on another path', { installer: BUNDLED, hook: managed(COMMAND, RULES_ON, LAYOUT_ELSEWHERE) }, 0, BOTH.slice(2)],
     ['a rules line on another path and an armed layout line', { installer: BUNDLED, hook: managed(COMMAND, RULES_ELSEWHERE, LAYOUT_ON) }, 0, BOTH.slice(0, 2)],
-    ['no rules theme and an armed layout line', { installer: BUNDLED, rules: false, hook: managed(LAYOUT_ON) }, 3, () => [`nothing to plan — the rules-check line: not armable (${THEMES.map(({ name }) => `${name}: absent`).join(', ')}); the layout-check line: armed`]],
+    ['no rules theme and an armed layout line', { installer: BUNDLED, rules: false, hook: managed(LAYOUT_ON) }, 3, () => [`nothing to plan — the rules-check line: not armable (${THEMES.map(({ name, home }) => `${name}: ${home === 'kit' ? 'record' : 'absent'}`).join(', ')}); the layout-check line: armed`]],
     ['both lines armed', { installer: BUNDLED, hook: managed(RULES_ON, LAYOUT_ON) }, 3, () => ['nothing to plan — the rules-check line: armed; the layout-check line: armed']],
     ['an absent installer', { installer: null }, 3, (root) => [`${join(root, KIT_INSTALLER)} is absent — nothing here places the hook installer`]],
     ['an installer that is a directory', { installer: 'dir' }, 3, (root) => [`${join(root, KIT_INSTALLER)} is not a regular file`]],

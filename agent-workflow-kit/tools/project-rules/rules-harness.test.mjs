@@ -17,6 +17,7 @@ export const UPGRADE = 'run /agent-workflow-kit upgrade';
 
 export const KIT_TEXT = '---\ntype: rules\nmaxLines: 80\n---\n\n# Project layout\n\nA module is a directory.\n';
 export const LOCAL_TEXT = '---\ntype: rules\n---\n\n# Project layout\n\nTests live in test/.\n';
+export const MERGED_FATES = Object.freeze(['K1 rewritten-as E1 because-of L1', 'L1 folded-into E1']);
 export const MERGED_TEXT = '---\ntype: rules\nmaxLines: 80\n---\n\n# Project layout\n\nA module is a directory. Tests live in test/.\n';
 
 // The suites written for the one theme keep judging it alone through the registry injection.
@@ -35,11 +36,14 @@ export const makeEngine = ({ lens = true } = {}) => {
   return { env: { AGENT_WORKFLOW_ENGINE_DIR: dir }, home: tempDir('project-rules-home-'), dir };
 };
 
-// entryOf({ kit, local?, effective }) → the record entry those texts stand for; no local = 'absent'.
-export const entryOf = ({ kit, local, effective }) =>
-  ({ kit: sha(kit), local: local === undefined ? 'absent' : sha(local), effective: sha(effective) });
+// entryOf({ kit, local?, effective, fates? }) → the proved entry those texts stand for; no local = 'absent';
+// legacyOf(entry) → the same entry as an earlier kit recorded it, with no fates.
+export const entryOf = ({ kit, local, effective, fates = [] }) =>
+  ({ kit: sha(kit), local: local === undefined ? 'absent' : sha(local), effective: sha(effective), fates });
 
-export const recordText = (themes, schema = 1) => `${JSON.stringify({ schema, themes }, null, 2)}\n`;
+export const legacyOf = ({ kit, local, effective }) => ({ kit, local, effective });
+
+export const recordText = (themes, schema = 2) => `${JSON.stringify({ schema, themes }, null, 2)}\n`;
 
 // makeProject(files) → a temp project root holding docs/ai/ and each { relative path: text } given.
 export const makeProject = (files = {}) => {
@@ -62,7 +66,7 @@ export const mergedProject = () => makeProject({
   [KIT]: KIT_TEXT,
   [LOCAL]: LOCAL_TEXT,
   [EFFECTIVE]: MERGED_TEXT,
-  [RECORD]: recordText({ 'project-layout': entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT }) }),
+  [RECORD]: recordText({ 'project-layout': entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT, fates: MERGED_FATES }) }),
 });
 
 export const removeProject = (root) => rmSync(root, { recursive: true, force: true });

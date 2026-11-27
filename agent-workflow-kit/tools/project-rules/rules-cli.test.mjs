@@ -8,14 +8,15 @@ import { basename, dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  EFFECTIVE, KIT, KIT_TEXT, LOCAL, MERGED_TEXT, ONE_THEME, RECORD, UPGRADE,
-  copyProject, entryOf, load, makeProject, mergedProject, need, recordText, removeProject, sha, snapshot,
+  EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_FATES, MERGED_TEXT, ONE_THEME, RECORD, THEME_NAMES, UPGRADE,
+  copyProject, entryOf, legacyOf, load, makeProject, mergedProject, need, recordText, removeProject, sha, snapshot,
 } from './rules-harness.test.mjs';
 
 const CLI = fileURLToPath(new URL('./rules-cli.mjs', import.meta.url));
 const NOTE = 'move your edit to local/, a rebuild drops it';
 const h = sha(KIT_TEXT);
 const ONE = { themes: ONE_THEME };
+const FORMS = ['K<n> replaced-by L<m>', 'K<n> rewritten-as E<m> because-of L<k>', 'L<n> folded-into E<m>'];
 const FOUR = ['--theme', 'project-layout', '--kit', h, '--local', 'absent', '--effective', h];
 
 const loadMain = async () => need(await load('./rules-cli.mjs'), 'main');
@@ -48,6 +49,8 @@ describe('spec:project-rules/S12 exactly one mode with exactly its options, help
       assert.equal(out.stderr, '');
       assert.match(out.stdout, /--check/);
       assert.match(out.stdout, /--record/);
+      assert.match(out.stdout, /--fate/);
+      for (const form of FORMS) assert.ok(out.stdout.includes(form), out.stdout);
     });
   }
 
@@ -60,6 +63,8 @@ describe('spec:project-rules/S12 exactly one mode with exactly its options, help
     ['--check', '--check'],
     ['--check', '--cwd', 'a', '--cwd', 'b'],
     ['--check', '--theme', 'project-layout'],
+    ['--check', '--fate', 'x'],
+    ['--record', ...FOUR, '--fate'],
     ['--record', '--theme', 'project-layout', '--kit', h, '--local', 'absent'],
     ['--record', '--theme', 'project-layout', '--theme', 'project-layout', '--kit', h, '--local', 'absent', '--effective', h],
     ['--help', '--check'],
@@ -84,11 +89,18 @@ describe('spec:project-rules/S12 exactly one mode with exactly its options, help
     });
   }
 
-  it('--check with only --cwd over an empty project is accepted and exits 0', async () => {
+  it('--record accepts repeated --fate values rather than usage', async () => {
+    const main = await loadMain();
+    const out = main(['--record', ...FOUR, ...MERGED_FATES.flatMap((fate) => ['--fate', fate])], { cwd: root, deps: ONE });
+    assert.equal(out.code, 1);
+    assert.match(out.stderr, /^project-rules: --record refused/);
+  });
+
+  it('--check with only --cwd over an empty project is accepted and exits 1', async () => {
     const main = await loadMain();
     const out = main(['--check', '--cwd', root], { deps: ONE });
-    assert.equal(out.code, 0);
-    assert.equal(out.stdout, 'project-layout: absent\n');
+    assert.equal(out.code, 1);
+    assert.match(out.stdout, /^project-layout: record \(not-laid\) — .+ — run \/agent-workflow-kit upgrade\n$/);
     assert.equal(out.stderr, '');
   });
 });
@@ -114,10 +126,10 @@ describe('spec:project-rules/S13 --check exits 0 only on current or absent, name
     }
   };
 
-  it('an empty project is absent and exits 0', async () => {
+  it('an empty project is not-laid and exits 1', async () => {
     const main = await loadMain();
     runEach(main, project(() => makeProject()), {
-      code: 0, stdout: (s, how) => assert.equal(s, 'project-layout: absent\n', how),
+      code: 1, stdout: (s, how) => assert.match(s, /^project-layout: record \(not-laid\) — .+ — run \/agent-workflow-kit upgrade\n$/, how),
     });
   });
 
@@ -152,7 +164,7 @@ describe('spec:project-rules/S13 --check exits 0 only on current or absent, name
     });
   });
 
-  it('spawned directly, a drift project exits 1 and an empty one exits 0', async () => {
+  it('spawned directly, a drift project and an empty one exit 1', async () => {
     await loadMain();
     const spawn = (root) => spawnSync(process.execPath, [CLI, '--check', '--cwd', root], { encoding: 'utf8' });
     const drift = project(driftProject);
@@ -165,13 +177,18 @@ describe('spec:project-rules/S13 --check exits 0 only on current or absent, name
     assert.deepEqual(snapshot(drift), driftBefore);
     const empty = project(() => makeProject());
     const accepted = spawn(empty);
-    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(accepted.status, 1, accepted.stderr);
     const lines = accepted.stdout.split('\n').filter(Boolean);
-    assert.ok(lines.includes('project-layout: absent') && lines.every((line) => line.endsWith(': absent')), accepted.stdout);
+    assert.equal(lines.length, THEME_NAMES.length);
+    for (const [i, name] of THEME_NAMES.entries()) {
+      if (name === 'lens') assert.equal(lines[i], 'lens: absent');
+      else assert.ok(lines[i].startsWith(name + ': record (not-laid) — ') && lines[i].endsWith(' — ' + UPGRADE), lines[i]);
+    }
+    assert.equal(accepted.stderr, '');
   });
 });
 
-describe('spec:project-rules/S14 --record exits 0 on a write, 1 naming the failed condition while writing nothing', () => {
+describe('spec:project-rules/S14 --record exits 0 on a write printing what changed, 1 naming the failed condition while writing nothing', () => {
   const roots = [];
   const unrecorded = () => {
     const root = makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT });
@@ -180,12 +197,15 @@ describe('spec:project-rules/S14 --record exits 0 on a write, 1 naming the faile
   };
   after(() => roots.forEach(removeProject));
 
-  it('a kit copy with no record is recorded, exit 0', async () => {
+  it('a kit copy with no record prints the recorded line then the word-for-word line, exit 0', async () => {
     const main = await loadMain();
     const root = unrecorded();
     const out = main(['--record', ...FOUR, '--cwd', root]);
     assert.equal(out.code, 0, out.stderr);
-    assert.equal(out.stdout, `project-rules: recorded project-layout in ${RECORD}\n`);
+    const lines = out.stdout.trimEnd().split('\n');
+    assert.equal(lines[0], `project-rules: recorded project-layout in ${RECORD}`);
+    assert.equal(lines.length, 2);
+    assert.match(lines[1], /the kit file word for word/);
     assert.equal(out.stderr, '');
     const expected = recordText({ 'project-layout': entryOf({ kit: KIT_TEXT, effective: KIT_TEXT }) });
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), expected);
@@ -210,4 +230,67 @@ describe('spec:project-rules/S14 --record exits 0 on a write, 1 naming the faile
       assert.equal(existsSync(join(root, RECORD)), false);
     });
   }
+});
+
+describe('spec:project-rules/S46 record prints the proof refusal or what changed and keeps other legacy entries', () => {
+  const roots = [];
+  after(() => roots.forEach(removeProject));
+  const project = (kit, local, effective, extra = {}) => {
+    const root = makeProject({ [KIT]: kit, [LOCAL]: local, [EFFECTIVE]: effective, ...extra });
+    roots.push(root);
+    return root;
+  };
+  const argv = (root, kit, local, effective, fates) => ['--record', '--theme', 'project-layout', '--kit', sha(kit), '--local', sha(local), '--effective', sha(effective), '--cwd', root, ...fates.flatMap((fate) => ['--fate', fate])];
+  const recorded = (out, count) => {
+    assert.equal(out.code, 0, out.stderr);
+    assert.equal(out.stderr, '');
+    const lines = out.stdout.trimEnd().split('\n');
+    assert.equal(lines[0], `project-rules: recorded project-layout in ${RECORD}`);
+    assert.equal(lines.length, count + 1);
+    return lines.slice(1);
+  };
+  for (const [name, kit, local, effective, fates, words] of [
+    ['rewritten and folded rules', KIT_TEXT, LOCAL_TEXT, MERGED_TEXT, MERGED_FATES, [
+      ['K1', 'A module is a directory.', 'E1', 'A module is a directory. Tests live in', 'L1', 'Tests live in test/.'],
+      ['L1', 'Tests live in test/.', 'E1', 'A module is a directory. Tests live in'],
+    ]],
+    ['grouped replacements', KIT_TEXT + '\nAnother rule.\n', LOCAL_TEXT, LOCAL_TEXT, ['K1 replaced-by L1', 'K2 replaced-by L1'], [
+      ['K1', 'A module is a directory.', 'K2', 'Another rule.', 'L1', 'Tests live in test/.'],
+    ]],
+    ['no fates', KIT_TEXT, LOCAL_TEXT, KIT_TEXT + '\nTests live in test/.\n', [], [['every kit and local rule stands word for word']]],
+  ]) {
+    it('prints what changed for ' + name, async () => {
+      const main = await loadMain();
+      const root = project(kit, local, effective);
+      const lines = recorded(main(argv(root, kit, local, effective, fates), { deps: ONE }), words.length);
+      for (const [i, parts] of words.entries()) for (const part of parts) assert.ok(lines[i].includes(part), lines[i]);
+      assert.equal(readFileSync(join(root, EFFECTIVE), 'utf8'), effective);
+      assert.deepEqual(JSON.parse(readFileSync(join(root, RECORD), 'utf8')), { schema: 2, themes: { 'project-layout': entryOf({ kit, local, effective, fates }) } });
+    });
+  }
+  it('prints every proof refusal line on stderr with nothing written', async () => {
+    const main = await loadMain();
+    const root = project(KIT_TEXT, LOCAL_TEXT, MERGED_TEXT);
+    const before = snapshot(root);
+    const out = main(argv(root, KIT_TEXT, LOCAL_TEXT, MERGED_TEXT, []), { deps: ONE });
+    assert.equal(out.code, 1);
+    assert.equal(out.stdout, '');
+    assert.ok(out.stderr.startsWith('project-rules: --record refused (unproved-merge)'), out.stderr);
+    const proveMerge = need(await load('./rules-check.mjs'), 'proveMerge');
+    const proof = proveMerge({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT, fates: [] });
+    assert.equal(proof.ok, false);
+    for (const line of proof.lines) assert.ok(out.stderr.includes(line), line);
+    for (const part of ['kit order:', 'local:', 'accounted:', 'KH1', 'K1', 'L1', 'E1', ...FORMS]) assert.ok(out.stderr.includes(part), out.stderr);
+    assert.doesNotMatch(out.stderr, /\b(should|try|fix|consider|instead|suggest|perhaps|maybe|add)\b/i);
+    assert.deepEqual(snapshot(root), before);
+  });
+  it('carries every other schema 1 entry unchanged as legacy', async () => {
+    const main = await loadMain();
+    const others = Object.fromEntries(THEME_NAMES.slice(1).map((name) => [name, legacyOf(entryOf({ kit: name, effective: name }))]));
+    const root = project(KIT_TEXT, LOCAL_TEXT, MERGED_TEXT, { [RECORD]: recordText(others, 1) });
+    recorded(main(argv(root, KIT_TEXT, LOCAL_TEXT, MERGED_TEXT, MERGED_FATES)), 2);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, RECORD), 'utf8')), {
+      schema: 2, themes: { ...others, 'project-layout': entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT, fates: MERGED_FATES }) },
+    });
+  });
 });

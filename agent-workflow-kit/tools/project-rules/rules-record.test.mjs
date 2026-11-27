@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, RECORD,
-  copyProject, entryOf, load, makeProject, mergedProject, need, recordText, removeProject, sha, snapshot,
+  EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_FATES, MERGED_TEXT, RECORD,
+  copyProject, entryOf, legacyOf, load, makeProject, mergedProject, need, recordText, removeProject, sha, snapshot,
 } from './rules-harness.test.mjs';
 
 const THEME = 'project-layout';
@@ -38,10 +38,10 @@ const link = (root, target, rel) => {
   symlinkSync(target, join(root, rel));
 };
 const copyPassed = () => entryOf({ kit: KIT_TEXT, effective: KIT_TEXT });
-const mergePassed = () => entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT });
+const mergePassed = () => entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT, fates: MERGED_FATES });
 
 describe('spec:project-rules/S3 record writes the closed entry, keeps every other theme and replaces an unreadable record', () => {
-  it('writes schema 1 with the local absent stated for a kit copy with no record', async () => {
+  it('writes schema 2 with the local absent stated for a kit copy with no record', async () => {
     const writeRecord = await writeRecordOf();
     const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT }));
     const result = writeRecord(root, THEME, copyPassed());
@@ -50,14 +50,17 @@ describe('spec:project-rules/S3 record writes the closed entry, keeps every othe
     assert.deepEqual(result.entry, copyPassed());
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
     assert.equal(recordOf(root).themes[THEME].local, 'absent');
+    assert.equal(result.changes.length, 1);
+    assert.match(result.changes[0], /the kit file word for word/);
   });
 
-  it('writes the merge entry of the three digests', async () => {
+  it('writes the merge entry with normalized fates', async () => {
     const writeRecord = await writeRecordOf();
     const root = track(makeProject({ [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: MERGED_TEXT }));
-    const result = writeRecord(root, THEME, mergePassed());
+    const result = writeRecord(root, THEME, { ...mergePassed(), fates: MERGED_FATES.map((fate) => '  ' + fate.replaceAll(' ', '  ') + ' ') });
     assert.equal(result.ok, true);
-    assert.deepEqual(recordOf(root), { schema: 1, themes: { [THEME]: mergePassed() } });
+    assert.deepEqual(result.entry, mergePassed());
+    assert.deepEqual(recordOf(root), { schema: 2, themes: { [THEME]: mergePassed() } });
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: mergePassed() }));
   });
 
@@ -68,12 +71,13 @@ describe('spec:project-rules/S3 record writes the closed entry, keeps every othe
     place(root, EFFECTIVE, MERGED_TEXT);
     const result = writeRecord(root, THEME, mergePassed());
     assert.equal(result.ok, true);
+    assert.deepEqual(result.entry, mergePassed());
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: mergePassed() }));
   });
 
   it('keeps another theme entry with its values and its place first', async () => {
     const writeRecord = await writeRecordOf();
-    const other = { kit: sha('other kit'), local: sha('other local'), effective: sha('other effective') };
+    const other = entryOf({ kit: 'other kit', local: 'other local', effective: 'other effective', fates: ['K1 replaced-by L1'] });
     const root = track(makeProject({
       [KIT]: KIT_TEXT,
       [EFFECTIVE]: KIT_TEXT,
@@ -82,30 +86,48 @@ describe('spec:project-rules/S3 record writes the closed entry, keeps every othe
     const result = writeRecord(root, THEME, copyPassed(), { themes: TWO_THEMES });
     assert.equal(result.ok, true);
     const written = recordOf(root);
+    assert.deepEqual(result.entry, written.themes[THEME]);
     assert.deepEqual(written.themes[OTHER.name], other);
     assert.deepEqual(Object.keys(written.themes), [OTHER.name, THEME]);
+    assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [OTHER.name]: other, [THEME]: copyPassed() }));
+  });
+
+  it('carries a schema 1 other entry unchanged as legacy into schema 2', async () => {
+    const writeRecord = await writeRecordOf();
+    const other = legacyOf(entryOf({ kit: 'other kit', local: 'other local', effective: 'other effective' }));
+    const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: recordText({ [OTHER.name]: other }, 1) }));
+    const result = writeRecord(root, THEME, copyPassed(), { themes: TWO_THEMES });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.entry, copyPassed());
+    assert.deepEqual(recordOf(root), { schema: 2, themes: { [OTHER.name]: other, [THEME]: copyPassed() } });
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [OTHER.name]: other, [THEME]: copyPassed() }));
   });
 
   it('replaces a record that is not JSON with one holding only the written entry', async () => {
     const writeRecord = await writeRecordOf();
     const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: '{ not json\n' }));
-    assert.equal(writeRecord(root, THEME, copyPassed()).ok, true);
+    const result = writeRecord(root, THEME, copyPassed());
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.entry, copyPassed());
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
   });
 
-  it('replaces a record with schema 2 with one holding only the written entry', async () => {
+  it('replaces a record with schema 3 with one holding only the written entry', async () => {
     const writeRecord = await writeRecordOf();
-    const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: recordText({ [THEME]: copyPassed() }, 2) }));
-    assert.equal(writeRecord(root, THEME, copyPassed()).ok, true);
+    const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: recordText({ [THEME]: copyPassed() }, 3) }));
+    const result = writeRecord(root, THEME, copyPassed());
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.entry, copyPassed());
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
   });
 
   it('replaces a record whose kit digest is wrapped in an array with one holding only the written entry', async () => {
     const writeRecord = await writeRecordOf();
-    const entry = { ...copyPassed(), kit: [copyPassed().kit] };
+    const entry = { ...legacyOf(copyPassed()), kit: [copyPassed().kit] };
     const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: JSON.stringify({ schema: 1, themes: { [THEME]: entry } }) }));
-    assert.equal(writeRecord(root, THEME, copyPassed()).ok, true);
+    const result = writeRecord(root, THEME, copyPassed());
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.entry, copyPassed());
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
   });
 });
@@ -229,16 +251,8 @@ describe('spec:project-rules/S4 record writes nothing and names the failed condi
     await refuses(root, THEME, entryOf({ kit: KIT_TEXT, effective: MERGED_TEXT }), 'effective-differs-from-kit');
   });
 
-  it('effective-equals-input: a local file with the effective equal to the kit', async () => {
-    const root = makeProject({ [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: KIT_TEXT });
-    const passed = entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: KIT_TEXT });
-    await refuses(root, THEME, passed, 'effective-equals-input');
-  });
-
-  it('effective-equals-input: a local file with the effective equal to the local', async () => {
-    const root = makeProject({ [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: LOCAL_TEXT });
-    const passed = entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: LOCAL_TEXT });
-    await refuses(root, THEME, passed, 'effective-equals-input');
+  it('fate-without-local: a fate given for a kit copy with no local file', async () => {
+    await refuses(copyProject(), THEME, { ...copyPassed(), fates: ['K1 replaced-by L1'] }, 'fate-without-local');
   });
 
   it('a refusal never calls the write door', async () => {
@@ -248,5 +262,36 @@ describe('spec:project-rules/S4 record writes nothing and names the failed condi
     };
     await refuses(mergedProject(), THEME, { ...mergePassed(), kit: sha('another kit') }, 'kit-moved', { write });
     assert.deepEqual(calls, []);
+  });
+});
+
+describe('spec:project-rules/S45 a local merge is written exactly when its proof holds', () => {
+  for (const [name, local, effective, fates] of [
+    ['the harness merge', LOCAL_TEXT, MERGED_TEXT, MERGED_FATES],
+    ['a local rule folded into the identical kit rule', KIT_TEXT, KIT_TEXT, ['L1 folded-into E1']],
+    ['the local file replacing the kit rule with its heading kept', LOCAL_TEXT, LOCAL_TEXT, ['K1 replaced-by L1']],
+  ]) {
+    it('writes ' + name, async () => {
+      const root = track(makeProject({ [KIT]: KIT_TEXT, [LOCAL]: local, [EFFECTIVE]: effective }));
+      const passed = entryOf({ kit: KIT_TEXT, local, effective, fates });
+      const result = (await writeRecordOf())(root, THEME, passed);
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.entry, passed);
+      assert.deepEqual(recordOf(root), { schema: 2, themes: { [THEME]: passed } });
+      assert.equal(result.changes.length, fates.length);
+    });
+  }
+  it('refuses an unproved merge with the proof lines and nothing written', async () => {
+    const root = makeProject({ [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: MERGED_TEXT });
+    const result = await refuses(root, THEME, { ...mergePassed(), fates: [] }, 'unproved-merge');
+    const proveMerge = need(await load('./rules-check.mjs'), 'proveMerge');
+    const proof = proveMerge({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT, fates: [] });
+    assert.equal(proof.ok, false);
+    assert.match(result.message, /kit order: .*K1/);
+    for (const line of proof.lines) assert.ok(result.message.includes(line), line);
+  });
+  it('refuses missing frontmatter before unproved-merge', async () => {
+    const root = makeProject({ [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: NO_FRONTMATTER });
+    await refuses(root, THEME, entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: NO_FRONTMATTER, fates: ['K99 replaced-by L1'] }), 'frontmatter');
   });
 });
