@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readApprovalFacts } from './plan-approval/index.mjs';
+import { checkStoryStart } from './plan-shape-ownership.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { judgePlan, readPlanDocument, readPlansInFlight } from './plan-shape-facts.mjs';
 import { checkPlan, formatFindings, verifyPlan } from './plan-shape.mjs';
@@ -12,11 +14,12 @@ const USAGE = `Usage:
 
 const writeLine = (write, line) => write(`${line}\n`);
 
-const runExplicit = (cwd, arm, operand, write) => {
+const runExplicit = (cwd, env, arm, operand, write) => {
   const document = readPlanDocument(cwd, operand);
-  const options = arm === '--check' ? { rules: checkPlan, plan: document.identity } : { rules: verifyPlan };
-  const { result } = judgePlan(cwd, document, options);
+  const options = arm === '--check' ? { rules: checkPlan, plan: document.identity, approvalFacts: readApprovalFacts({ cwd, env }) } : { rules: verifyPlan };
+  const { result, story, otherPlans, stories } = judgePlan(cwd, document, options);
   writeLine(write, formatFindings(result, operand));
+  for (const { message } of checkStoryStart({ own: story, otherPlans, stories }).waits) writeLine(write, `plan-shape: NOTE — wait: ${message}`);
   return result.findings.length === 0 ? 0 : 1;
 };
 
@@ -38,7 +41,7 @@ export const main = (argv = process.argv.slice(2), io = {}) => {
     return 2;
   }
   try {
-    return operand === '--in-flight' ? runInFlight(cwd, stdout) : runExplicit(cwd, arm, operand, stdout);
+    return operand === '--in-flight' ? runInFlight(cwd, stdout) : runExplicit(cwd, io.env ?? process.env, arm, operand, stdout);
   } catch (error) {
     writeLine(stderr, `plan-shape: ${error.message}`);
     return 2;

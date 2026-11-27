@@ -63,7 +63,7 @@ const getGoalLines = (document) => {
   });
 };
 const getSectionSpan = (document, heading) => heading ? getSectionEnd(document, heading) - heading.index : 0;
-const getConcretePaths = (row, facts) => isSweep(row.path) ? facts.expansions?.[row.path] ?? [] : [row.path];
+export const getConcretePaths = (row, facts) => isSweep(row.path) ? facts.expansions?.[row.path] ?? [] : [row.path];
 const getPathFact = (facts, path) => facts.pathFacts?.[path] ?? null;
 const getAnchorPath = (anchor) => anchor.replace(/:[1-9]\d*$/, '');
 const hasPathDefect = (path) => !(!path.includes('\\') &&
@@ -363,18 +363,19 @@ const judge = (text, facts, stateRules) => {
   const parsedResult = parseForJudge(text);
   if (parsedResult.error) {
     const line = Number(/:(\d+):/.exec(parsedResult.error.message)?.[1] ?? 1);
-    return { findings: [makeFinding(line, 'block-model', parsedResult.error.message)], skips: [], parsed: null };
+    return { findings: [makeFinding(line, 'block-model', parsedResult.error.message)], skips: [], parsed: null, story: null };
   }
   const parsed = parsedResult.parsed;
   const relation = relateAmendments({ parsed, makeFinding, isSweep });
   const goalLines = getGoalLines(parsed.document);
   const reasons = goalLines.filter(({ reason }) => reason !== null);
   const counts = checkPlanCounts(String(text ?? ''), parsed.document, relation, reasons, stateRules === checkAuthoring);
+  const ownership = checkStoryOwnership({ rows: parsed.rows, goalLines, facts, getConcretePaths });
   const structural = [...checkHeadings(parsed.document), ...counts.findings, ...checkLedgerStructure(parsed, facts, relation, goalLines),
-    ...checkStoryOwnership({ rows: parsed.rows, goalLines, facts, getConcretePaths }).findings];
+    ...ownership.findings];
   const state = stateRules ? stateRules(parsed, facts, relation) : { findings: [], skips: [] };
   const findings = [...structural, ...state.findings].sort((left, right) => left.line - right.line);
-  return { findings, skips: state.skips, parsed, ...(counts.notes.length ? { notes: counts.notes } : {}) };
+  return { findings, skips: state.skips, parsed, story: ownership.story, ...(counts.notes.length ? { notes: counts.notes } : {}) };
 };
 
 export const checkPlan = (text, facts) => judge(text, facts, checkAuthoring);

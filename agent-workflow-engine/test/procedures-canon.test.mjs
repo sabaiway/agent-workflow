@@ -43,6 +43,14 @@ const slotsLineOf = (section) => {
 };
 
 describe('procedures.md — canonical activity-procedures reference', () => {
+  it('spec:plan-shape-ownership/S17 stops the ask on waits and recovers by the cause of refusal', () => {
+    const author = flatStep('plan-authoring', 6);
+    assert.match(author, /--check <plan>.*wait note.*no yes is asked/i);
+    assert.match(author, /amendment.*changes the story's claims.*record.*from its essence file.*before any work/i);
+    const recovery = procedures.split('## plan-authoring')[0].replace(/\s+/g, ' ');
+    assert.match(recovery, /waiting-on-approval.*only when.*approval check.*recording or a new yes/i);
+    assert.match(recovery, /every other refusal's step.*check.*again before rendering/i);
+  });
   it('exists and carries real content', () => {
     assert.ok(procedures.length > 500, 'the procedures canon must carry real content');
   });

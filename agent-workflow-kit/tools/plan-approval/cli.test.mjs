@@ -10,7 +10,7 @@ import { RECEIPTS_BASENAME } from '../core-evidence-receipts.mjs';
 import { canonicalFlowDigest } from '../flow-record-identity.mjs';
 import { stripGitLocationEnv } from '../git-env.mjs';
 import { judgePlan, readPlanDocument } from '../plan-shape-facts.mjs';
-import { makeTree, planWith, write } from '../plan-shape-harness.test.mjs';
+import { buildStoryEpic, makeOtherPlan, makeTree, planWith, write } from '../plan-shape-harness.test.mjs';
 import { escapeForDisplay } from '../repo-lex.mjs';
 import { getRevisionHomePath } from '../spec-check-ops.mjs';
 import {
@@ -25,6 +25,9 @@ const BASENAME = 'agent-workflow-plan-approvals.jsonl';
 const ESSENCE = 'Keep the guide current.\n';
 const RECORD_KEYS = ['schema', 'plan', 'date', 'planDigest', 'contractsDigest', 'contracts', 'essence', 'from', 'approval'].sort();
 const HEX = /^[a-f0-9]{64}$/;
+const RECORD_COMMAND = /plan-approval\/cli\.mjs\s+record\b/;
+const NEW_YES_STEP = /new yes.*plan-approval\/cli\.mjs\s+record\b/s;
+const outputOf = (result) => result.stdout + result.stderr;
 const NAV_BODY = `${FRONTMATTER}maxLines: 80
 kind: index
 ---
@@ -39,6 +42,7 @@ const NAV_ROW = `R3 | modify | ${NAVIGATOR} | update the listing | ${SPEC}:1`;
 const cleanEnv = () => {
   const env = stripGitLocationEnv(process.env);
   delete env.NODE_TEST_CONTEXT;
+  delete env.AW_REVIEW_RECEIPTS;
   return env;
 };
 const git = (argv, cwd) => {
@@ -59,7 +63,7 @@ const recordPath = (root) => {
   const receipt = join(git(['rev-parse', '--absolute-git-dir'], root).trimEnd(), RECEIPTS_BASENAME);
   return join(dirname(receipt), BASENAME);
 };
-const readRecords = (root) => fs.readFileSync(recordPath(root), 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line));
+const readRecords = (root, path = recordPath(root)) => fs.readFileSync(path, 'utf8').trimEnd().split('\n').map((line) => JSON.parse(line));
 const writeRecords = (root, entries) => fs.writeFileSync(recordPath(root), entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
 const essenceFile = (t, essence = ESSENCE) => {
   const scratch = makeTree('plan-approval-cli-essence');
@@ -68,33 +72,72 @@ const essenceFile = (t, essence = ESSENCE) => {
   return join(scratch, 'essence.txt');
 };
 const recordArgs = (plan, file) => ['record', plan, '--essence-file', file];
-const invoke = async (main, cwd, argv) => {
+const invoke = async (main, cwd, argv, env = cleanEnv()) => {
   const output = { stdout: '', stderr: '' };
   const status = await main(argv, {
     cwd,
-    env: cleanEnv(),
+    env,
     stdout: (chunk) => { output.stdout += chunk; },
     stderr: (chunk) => { output.stderr += chunk; },
   });
   return { status, ...output };
 };
+const commandsFor = (main, root, file, env = cleanEnv()) => ({
+  record: (plan = PLAN) => invoke(main, root, recordArgs(plan, file), env),
+  check: (plan = PLAN, ...args) => invoke(main, root, ['check', plan, ...args], env),
+});
 const raceRecord = (root, plan, file) => new Promise((resolve) => {
   execFile(process.execPath, [CLI, ...recordArgs(plan, file)], { cwd: root, env: cleanEnv(), encoding: 'utf8' },
     (error, stdout, stderr) => resolve({ status: error?.code ?? 0, stdout, stderr }));
 });
 const expect = (result, status, ...names) => {
-  const output = result.stdout + result.stderr;
+  const output = outputOf(result);
   assert.equal(result.status, status, output);
   for (const name of names) assert.ok(output.includes(name), output);
 };
 const expectNoMatch = (result, plan = PLAN) => {
   expect(result, 1, plan, 'record');
-  assert.match(result.stdout + result.stderr, /plan-approval\/cli\.mjs\s+record\b/);
+  assert.match(outputOf(result), RECORD_COMMAND);
+};
+const expectNoEntryStep = (result, plan = PLAN) => {
+  expectNoMatch(result, plan);
+  assert.match(outputOf(result), /--essence-file/);
+  assert.match(outputOf(result), /new yes/i);
+};
+const expectChangedContract = (result, plan = PLAN) => {
+  expectNoMatch(result, plan);
+  assert.match(outputOf(result), NEW_YES_STEP);
+};
+const expectWrongApproval = (result, approved) => {
+  expect(result, 1, approved, 'dispatch part');
+  assert.doesNotMatch(outputOf(result), RECORD_COMMAND);
 };
 const putContract = (root, body = CONTRACT) => {
   assert.deepEqual(readSpecDocument(body, 'guide.md').errors, []);
   write(root, SPEC, body);
   write(root, PLAN, contractPlan());
+};
+const EPIC_PATH = 'docs/ai/epics/ALPHA.md';
+const CLAIM_PATH = 'docs/readme.md';
+const STORY_PATH = 'docs/story/guide.md';
+const STORY_GOAL = 'Spec: not adopted.\nStory: S1 of ALPHA';
+const getStoryPlan = (path = STORY_PATH) => planWith({ goal: STORY_GOAL, ledger: `R1 | modify | ${path} | update the story | ${path}:1` });
+const putClaimPlans = (root, field = 'owns', claim = CLAIM_PATH) => {
+  write(root, EPIC_PATH, buildStoryEpic(claim, field));
+  write(root, STORY_PATH, 'Story document.\n');
+  write(root, RENAMED, getStoryPlan());
+};
+const expectStart = (result, held, step) => {
+  expect(result, 1, held, step);
+  assert.doesNotMatch(outputOf(result), RECORD_COMMAND);
+};
+const getEntry = async (root, plan, { legacy = false, from = 'approval' } = {}) => {
+  const { approvedParts, composeEntry, digestPlan } = await import('./index.mjs');
+  const verdict = judgePlan(root, readPlanDocument(root, plan));
+  assert.equal(verdict.accepted, true, JSON.stringify(verdict.result.findings));
+  const { goal, rows, verification } = approvedParts(verdict.text, verdict);
+  const planDigest = legacy ? canonicalFlowDigest({ goal, rows, verification }) : digestPlan(verdict.text, verdict);
+  return composeEntry({ plan, date: '2026-11-24', planDigest, contractsDigest: canonicalFlowDigest([]), contracts: [], essence: ESSENCE, from });
 };
 
 describe('spec:plan-approval/S4 record command', () => {
@@ -228,16 +271,17 @@ describe('spec:plan-approval/S5 check command', () => {
     const root = makeRepo(t);
     const { main } = await import('./cli.mjs');
     const check = (...extra) => invoke(main, root, ['check', PLAN, ...extra]);
-    expectNoMatch(await check());
+    expectNoEntryStep(await check());
     fs.writeFileSync(recordPath(root), '');
-    expectNoMatch(await check());
+    expectNoEntryStep(await check());
     writeApprovedPlan(root, PLAN);
     const [entry] = readRecords(root);
     expect(await check(), 0);
     expect(await check('--digest', entry.approval), 0);
-    expectNoMatch(await check('--digest', 'f'.repeat(64)));
+    const wrong = await check('--digest', 'f'.repeat(64));
+    expectWrongApproval(wrong, entry.approval);
     write(root, PLAN, APPROVED_PLAN_BODY.replace('Keep the guide current.', 'Retire the guide.'));
-    expectNoMatch(await check());
+    expectNoEntryStep(await check());
   });
 
   it('excludes navigator rows from the contracts and refuses a contract changed after approval', async (t) => {
@@ -255,7 +299,8 @@ describe('spec:plan-approval/S5 check command', () => {
     write(root, NAVIGATOR, NAV_BODY.replace('# Specs', '# Contracts'));
     expect(await invoke(main, root, ['check', PLAN]), 0);
     write(root, SPEC, CONTRACT.replace('Keep the guide current.', 'Retire the guide.'));
-    expectNoMatch(await invoke(main, root, ['check', PLAN]));
+    const changed = await invoke(main, root, ['check', PLAN]);
+    expectChangedContract(changed);
   });
 
   it('uses the recorded plan revision home before the store even when the plan is renamed', async (t) => {
@@ -274,7 +319,8 @@ describe('spec:plan-approval/S5 check command', () => {
     write(root, getRevisionHomePath(RENAMED, SPEC), CONTRACT);
     expect(await invoke(main, root, ['check', RENAMED]), 0);
     write(root, homePath, revision.replace('Improve the guide.', 'Retire the guide.'));
-    expectNoMatch(await invoke(main, root, ['check', RENAMED]), RENAMED);
+    const changed = await invoke(main, root, ['check', RENAMED]);
+    expectChangedContract(changed, RENAMED);
   });
 
   it('names a malformed line and never lets an entry with extra keys match', async (t) => {
@@ -302,9 +348,271 @@ describe('spec:plan-approval/S5 check command', () => {
     assert.equal(fs.readFileSync(join(root, PLAN), 'utf8'), APPROVED_PLAN_BODY);
     assert.equal(judgePlan(root, readPlanDocument(root, PLAN)).accepted, false);
     const result = await invoke(main, root, ['check', PLAN]);
-    expectNoMatch(result);
-    expect(result, 1, broken);
+    expect(result, 1, broken, 'story-store');
+    assert.doesNotMatch(outputOf(result), RECORD_COMMAND);
   });
+});
+
+it('spec:plan-approval/S12 first recorded yes wins, including twins and locked preflight', async (t) => {
+  const { main } = await import('./cli.mjs');
+  const { appendApproval } = await import('./index.mjs');
+  const file = essenceFile(t);
+  const record = (root, plan, env) => commandsFor(main, root, file, env).record(plan);
+  const check = (root, plan, env) => commandsFor(main, root, file, env).check(plan);
+  for (const field of ['owns', 'shared']) {
+    for (const [first, second] of [[PLAN, RENAMED], [RENAMED, PLAN]]) {
+      const root = makeRepo(t);
+      putClaimPlans(root, field);
+      const body = fs.readFileSync(join(root, first));
+      const directory = join(root, 'receipts');
+      fs.mkdirSync(directory);
+      const overridePath = join(directory, BASENAME);
+      const env = { ...cleanEnv(), AW_REVIEW_RECEIPTS: join(directory, RECEIPTS_BASENAME) };
+      for (const plan of [first, second]) {
+        const draft = await check(root, plan, env);
+        expectNoMatch(draft, plan);
+        assert.doesNotMatch(outputOf(draft), /story-owns|story-shared/);
+      }
+      expect(await record(root, first, env), 0);
+      const step = first === PLAN ? 'narrow the claim if the story does not need the path' :
+        field === 'owns' ? 'carry the change in ALPHA S1 (revise its plan; the yes is asked again)' : 'name the story that carries the file';
+      expectStart(await record(root, second, env), first, `wait for ${first}'s Cleanup, or ${step}`);
+      assert.equal(readRecords(root, overridePath).length, 1);
+      assert.ok(!fs.existsSync(recordPath(root)));
+      fs.rmSync(join(root, first));
+      expect(await record(root, second, env), 0);
+      assert.equal(readRecords(root, overridePath).length, 2);
+      fs.writeFileSync(join(root, first), body);
+      expectStart(await record(root, RENAMED, env), PLAN, "wait for " + PLAN + "'s Cleanup");
+    }
+  }
+  for (const twin of [false, true]) {
+    const root = makeRepo(t);
+    putClaimPlans(root);
+    const competitor = await getEntry(root, PLAN);
+    const candidate = await getEntry(root, RENAMED);
+    const inserted = twin ? [competitor, candidate] : [competitor];
+    const lock = recordPath(root) + '.lock';
+    const open = fs.openSync;
+    const attempts = [];
+    t.mock.method(fs, 'openSync', (path, flags, ...args) => {
+      if (path === lock && flags === 'wx') {
+        attempts.push(path);
+        writeRecords(root, inserted);
+      }
+      return open(path, flags, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      expectStart(await record(root, RENAMED), PLAN, `wait for ${PLAN}'s Cleanup`);
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(attempts.length, 1);
+    assert.deepEqual(readRecords(root), inserted);
+  }
+  const racing = makeRepo(t);
+  putClaimPlans(racing);
+  const races = await Promise.all([raceRecord(racing, PLAN, file), raceRecord(racing, RENAMED, file)]);
+  assert.ok(races.some(({ status }) => status === 0));
+  assert.ok(races.every(({ status }) => status === 0 || status === 1));
+  const checks = await Promise.all([check(racing, PLAN), check(racing, RENAMED)]);
+  assert.ok(checks.filter(({ status }) => status === 0).length <= 1);
+
+  const same = makeRepo(t);
+  putClaimPlans(same);
+  const copy = getStoryPlan();
+  write(same, PLAN, copy);
+  expect(await record(same, RENAMED), 0);
+  expect(await check(same, PLAN), 0);
+  expect(await check(same, RENAMED), 0);
+  write(same, PLAN, getStoryPlan(CLAIM_PATH));
+  const heldStep = `carry the change in ${RENAMED} (revise it; the yes is asked again)`;
+  expectStart(await record(same, PLAN), RENAMED, heldStep);
+  const restored = await getEntry(same, PLAN);
+  writeRecords(same, [...readRecords(same), restored]);
+  for (const [plan, other] of [[PLAN, RENAMED], [RENAMED, PLAN]]) {
+    expectStart(await check(same, plan), other, `carry the change in ${other} (revise it; the yes is asked again)`);
+  }
+  const door = makeRepo(t);
+  putClaimPlans(door);
+  const candidate = await getEntry(door, RENAMED);
+  expect(await record(door, PLAN), 0);
+  const previous = readRecords(door);
+  assert.equal(appendApproval({ cwd: door, env: cleanEnv(), entry: candidate }).exitCode, 2);
+  assert.deepEqual(readRecords(door), previous);
+  const own = judgePlan(door, readPlanDocument(door, RENAMED)).story;
+  const otherPlans = [makeOtherPlan({ identity: PLAN, digest: previous[0].planDigest, paths: [CLAIM_PATH] })];
+  const carried = { ...candidate, from: 'provision' };
+  assert.equal(appendApproval({ cwd: door, env: cleanEnv(), entry: carried, start: { own, otherPlans } }).exitCode, 0);
+  assert.deepEqual(readRecords(door), [...previous, carried]);
+  const carriedCopy = { ...carried, plan: 'docs/plans/carried-copy.md' };
+  assert.equal(appendApproval({ cwd: door, env: cleanEnv(), entry: carriedCopy }).exitCode, 0);
+  assert.deepEqual(readRecords(door), [...previous, carried, carriedCopy]);
+  fs.rmSync(recordPath(door));
+  fs.mkdirSync(recordPath(door));
+  expect(await record(door, PLAN), 2, BASENAME);
+  expect(await check(door, PLAN), 2, BASENAME);
+  const flaky = makeRepo(t);
+  putClaimPlans(flaky);
+  expect(await record(flaky, RENAMED), 0);
+  writeRecords(flaky, [...readRecords(flaky), await getEntry(flaky, PLAN)]);
+  const held = readRecords(flaky);
+  const spawn = childProcess.spawnSync;
+  for (const run of [check, record]) {
+    const faults = [];
+    t.mock.method(childProcess, 'spawnSync', (command, argv, ...rest) => {
+      if (faults.length || command !== 'git' || argv?.[0] !== 'rev-parse' || argv[1] !== '--absolute-git-dir') return spawn(command, argv, ...rest);
+      faults.push(argv);
+      return { status: 128, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    });
+    syncBuiltinESMExports();
+    try {
+      expect(await run(flaky, PLAN), 2, 'no git directory');
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(faults.length, 1);
+  }
+  assert.deepEqual(readRecords(flaky), held);
+  const flakyRecord = recordPath(flaky);
+  const open = fs.openSync;
+  const reads = [];
+  t.mock.method(fs, 'openSync', (path, ...args) => {
+    if (path === flakyRecord) reads.push(path);
+    return open(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    expect(await check(flaky, PLAN), 1, 'story-owns');
+    expect(await check(flaky, RENAMED), 0);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.equal(reads.length, 2);
+});
+
+it('spec:plan-approval/S13 checks running claims at record and check, including amendments and renames', async (t) => {
+  const { main } = await import('./cli.mjs');
+  const root = makeRepo(t);
+  const file = essenceFile(t);
+  const { record, check } = commandsFor(main, root, file);
+  putClaimPlans(root);
+  expect(await record(PLAN), 0);
+  expect(await check(PLAN), 0);
+  for (const cross of [false, true]) {
+    const separate = makeRepo(t);
+    putClaimPlans(separate, 'shared');
+    const otherStory = cross ? 'Story: S1 of BETA' : 'Story: S2 of ALPHA';
+    const epic = buildStoryEpic(CLAIM_PATH, 'shared');
+    if (cross) write(separate, 'docs/ai/epics/BETA.md', epic.replace('Row ALPHA', 'Row BETA'));
+    else write(separate, EPIC_PATH, epic.replace('## Queue', `- S2 | Follow-up | depends-on: S1 | owns: none | shared: ${CLAIM_PATH} | state: planned\n## Queue`));
+    write(separate, PLAN, getStoryPlan(CLAIM_PATH).replace('Story: S1 of ALPHA', otherStory));
+    const calls = commandsFor(main, separate, file);
+    for (const plan of [RENAMED, PLAN]) expect(await calls.record(plan), 0);
+    for (const plan of [RENAMED, PLAN]) expect(await calls.check(plan), 0);
+  }
+  fs.rmSync(join(root, PLAN));
+  expect(await record(RENAMED), 0);
+  expect(await check(RENAMED), 0);
+  write(root, PLAN, APPROVED_PLAN_BODY);
+  const step = `wait for ${RENAMED}'s Cleanup, or carry the change in ALPHA S1 (revise its plan; the yes is asked again)`;
+  for (const body of [APPROVED_PLAN_BODY, planWith({ ledger: `R1 | modify | ${STORY_PATH} | update | ${STORY_PATH}:1\namendments:\nA1 | modify | ${CLAIM_PATH} | update | ${CLAIM_PATH}:1` })]) {
+    write(root, PLAN, body);
+    for (const result of [await record(PLAN), await check(PLAN)]) {
+      expectStart(result, RENAMED, step);
+      assert.match(outputOf(result), /story-owns/);
+    }
+  }
+  const moved = 'docs/plans/moved.md';
+  fs.renameSync(join(root, RENAMED), join(root, moved));
+  expect(await check(moved), 0);
+  expectStart(await check(PLAN), moved, `wait for ${moved}'s Cleanup`);
+  fs.renameSync(join(root, moved), join(root, RENAMED));
+  write(root, RENAMED, getStoryPlan().replace('update the story', 'revise the story'));
+  write(root, PLAN, APPROVED_PLAN_BODY);
+  expect(await check(PLAN), 0);
+});
+
+it('spec:plan-approval/S14 re-records changed claims from the same essence and restores the earlier digest', async (t) => {
+  const { main } = await import('./cli.mjs');
+  const root = makeRepo(t);
+  const file = essenceFile(t);
+  const { record, check } = commandsFor(main, root, file);
+  putClaimPlans(root, 'owns', STORY_PATH);
+  expect(await record(PLAN), 0);
+  const legacy = await getEntry(root, RENAMED, { legacy: true });
+  writeRecords(root, [...readRecords(root), legacy]);
+  expectNoEntryStep(await check(RENAMED), RENAMED);
+  expect(await record(RENAMED), 0);
+  expect(await check(RENAMED), 0);
+  const initial = readRecords(root).at(-1);
+  const widened = 'docs/';
+  write(root, EPIC_PATH, buildStoryEpic(widened));
+  expectNoEntryStep(await check(RENAMED), RENAMED);
+  expectStart(await record(RENAMED), PLAN, `wait for ${PLAN}'s Cleanup`);
+  assert.equal(readRecords(root).at(-1).approval, initial.approval);
+  const separateClaim = 'docs/story/';
+  write(root, EPIC_PATH, buildStoryEpic(separateClaim));
+  expectNoEntryStep(await check(RENAMED), RENAMED);
+  expect(await record(RENAMED), 0);
+  expect(await check(RENAMED), 0);
+  const widenedEntry = readRecords(root).at(-1);
+  assert.notEqual(widenedEntry.planDigest, initial.planDigest);
+  assert.equal(widenedEntry.essence, initial.essence);
+  const amendmentPath = 'docs/appendix.md';
+  write(root, amendmentPath, 'Appendix.\n');
+  const expanded = `${separateClaim}, ${amendmentPath}`;
+  write(root, EPIC_PATH, buildStoryEpic(expanded));
+  write(root, RENAMED, getStoryPlan().replace('## Verification', `amendments:\nA1 | modify | ${amendmentPath} | update appendix | ${STORY_PATH}:1\n\n## Verification`));
+  expectNoEntryStep(await check(RENAMED), RENAMED);
+  expect(await record(RENAMED), 0);
+  expect(await check(RENAMED), 0);
+  assert.notEqual(readRecords(root).at(-1).planDigest, initial.planDigest);
+  assert.notEqual(readRecords(root).at(-1).planDigest, widenedEntry.planDigest);
+  assert.equal(readRecords(root).at(-1).essence, initial.essence);
+  write(root, RENAMED, getStoryPlan());
+  write(root, EPIC_PATH, buildStoryEpic(STORY_PATH));
+  expect(await check(RENAMED, '--digest', initial.approval), 0);
+  expect(await check(PLAN), 0);
+});
+
+it('spec:plan-approval/S15 refused lines carry only the step for their cause', async (t) => {
+  const { main } = await import('./cli.mjs');
+  const root = makeRepo(t);
+  const file = essenceFile(t);
+  const { record, check } = commandsFor(main, root, file);
+  putContract(root);
+  expectNoEntryStep(await check());
+  expect(await record(), 0);
+  const [accepted] = readRecords(root);
+  const wrong = await check(PLAN, '--digest', 'f'.repeat(64));
+  expectWrongApproval(wrong, accepted.approval);
+  write(root, SPEC, CONTRACT.replace('Keep the guide current.', 'Retire the guide.'));
+  const changed = await check();
+  expectChangedContract(changed);
+  for (const body of [null, 'not a contract']) {
+    if (body === null) fs.rmSync(join(root, SPEC));
+    else write(root, SPEC, body);
+    for (const result of [await record(), await check()]) {
+      expect(result, 1, SPEC);
+      assert.match(outputOf(result), /fix/i);
+      assert.doesNotMatch(outputOf(result), RECORD_COMMAND);
+    }
+  }
+  write(root, SPEC, CONTRACT);
+  write(root, EPIC_PATH, '---\ntype: epic\n---\n# Broken\n');
+  const structure = await check();
+  expect(structure, 1, EPIC_PATH, 'story-store');
+  assert.doesNotMatch(outputOf(structure), RECORD_COMMAND);
+  fs.rmSync(join(root, EPIC_PATH));
+  putClaimPlans(root);
+  write(root, PLAN, APPROVED_PLAN_BODY);
+  recordApproval(root, RENAMED);
+  expectStart(await record(), RENAMED, `wait for ${RENAMED}'s Cleanup`);
 });
 
 it('spec:plan-approval/S7 executor stops unapproved slices before writes and preserves the slice list', () => {

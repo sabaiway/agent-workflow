@@ -18,6 +18,7 @@ const SCENARIO_SEPARATOR = ' :: ';
 const SCENARIO_LINE = /^- S\d+ /u;
 const REWRITTEN_KEYS = new Set([...SPEC_SCHEMA.rootOwnedKeys, 'lastUpdated']);
 const LINE_ENDING = '\n';
+const CLAIM_FIELDS = ['owns', 'shared'];
 const [GOAL_HEADING, , VERIFICATION_HEADING] = PLAN_HEADINGS;
 
 const normalizeLineEndings = (text) => text.replaceAll('\r\n', LINE_ENDING);
@@ -45,6 +46,8 @@ export const approvedParts = (text, verdict) => {
     goal: readSection(parsed.document, GOAL_HEADING),
     rows: approved.map(({ verb, path, responsibility }) => ({ verb, path, responsibility: removeRobustTag(responsibility) })),
     verification: readSection(parsed.document, VERIFICATION_HEADING),
+    ...(verdict.story ? { claims: Object.fromEntries(CLAIM_FIELDS.map((field) => [field,
+      verdict.story.claims.filter((claim) => claim.field === field).map(({ path }) => path).sort()])) } : {}),
   };
 };
 

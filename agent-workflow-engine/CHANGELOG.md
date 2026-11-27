@@ -4,6 +4,21 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 7.1.0 — the canon says when a story's claim binds, who runs first and each way out (AD-244)
+
+The planning canon now matches kit 24.3.0, where a story binds other plans only while a plan carrying it holds a yes.
+
+- `references/planning.md`, the epic section: a claim binds only while a plan carrying its story holds a yes on its
+  current text; the first recorded yes wins; the next step of each refusal (wait for the running plan's Cleanup,
+  carry the change in its story, declare a depends-on order, name the story, narrow the claim, claim the path in the
+  story's row); the yes is asked again at once after an approved part is edited; a wait note from the named-plan check
+  means no yes is asked until it clears; Research lists the running claims over the intended paths. The amendments
+  paragraph: an entry that takes the epic row's claim records the plan again from its essence file, with no new ask,
+  before any work under it.
+- `references/procedures.md`: plan-authoring step 6 asks no yes while a wait note stands and records the plan again
+  from its essence file when an amendment changes the story's claims; session recovery writes `waiting-on-approval`
+  only when the approval check names recording or a new yes as its step, and otherwise follows the refusal's step.
+
 ## 7.0.0 — a session starts by rendering its stage, an approval writes its record, and a plan carries no line counts (AD-241)
 
 The canon now tells each session how it starts and when code may begin; kit 24.0.0 carries the tools it names.

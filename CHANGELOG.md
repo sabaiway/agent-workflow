@@ -7,6 +7,28 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-27 — AD-244: a story binds other plans only while a plan carrying it holds a yes, the first recorded yes runs, and every refusal names its step (kit 24.3.0 MINOR, engine 7.1.0 MINOR; memory and the bridges unchanged)
+
+**`agent-workflow-kit/tools/plan-shape-ownership.mjs`** judges direction A over the stories of held plans only,
+exports `checkStoryStart` (a story's claims over held plans' paths, and a second plan of one story) and
+`getStoryIdentity`, and names a step in every `story-owns`, `story-shared` and `story-scope` message.
+**`plan-shape-facts.mjs`** reads `otherPlans` from the in-flight reader, judged without it and digested by the handed
+approval facts, and `judgePlan` returns the plan's own story record, its concrete paths and the other plans;
+**`plan-shape.mjs`** exports `getConcretePaths` and carries the story into the structure verdict;
+**`plan-shape-cli.mjs`** `--check <plan>` reads the approval facts and prints each wait as a note.
+**`plan-approval/entries.mjs`** adds a story plan's sorted owns and shared claims to the approved parts;
+**`plan-approval/record.mjs`** adds `readApprovalFacts` (re-exported by the door), judges the relation and the match
+of `check` and `record` on one read of the record (a failed read exits 2 before any match or write), judges the
+start rule before the twin and inside the append lock, refuses a second plan of one story at `check`, and words
+each refusal by its cause.
+**`stage-render/cli.mjs`** and **`worktrees.mjs`** say the plan does not pass its approval check, name
+`waiting-on-approval` only for a record or a new yes, and provision falls back to MAIN only on a missing entry.
+**`agent-workflow-engine/references/planning.md`** (epic section, amendments) and **`procedures.md`** (step 6,
+recovery) follow. The ten suites of the plan, `session-close-check.test.mjs` and the checker fault exceptions in
+`checker-verdict/checkers.json` follow. Specs `kit/plan-shape-ownership` revision 2, `kit/plan-approval` revision 4,
+`kit/plan-structure` revision 4, `kit/plan-review-loop` revision 20, `kit/epic-shape` revision 3 and
+`kit/stage-render` revision 3.
+
 ## 2026-11-27 — AD-243: the upgrade's rules merge is proved rule by rule, its fates are recorded and shown, and the refusal names the rule (kit 24.2.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/project-rules/rules-check.mjs`** exports `readRuleUnits` (the paragraphs and list items

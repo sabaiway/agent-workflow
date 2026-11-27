@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { renameSync, rmSync, symlinkSync } from 'node:fs';
-import { ledgerOf, makeTree, planWith, write } from './plan-shape-harness.test.mjs';
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { buildStoryEpic as buildEpic, ledgerOf, makeTree, planWith, UNREADABLE_PLAN_BYTES, write } from './plan-shape-harness.test.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { recordApproval } from './plan-approval/approved-plan-harness.test.mjs';
 import { FRONT, indexDoc, specDoc, STORE } from './spec-check-harness.test.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), 'plan-shape-cli.mjs');
+const APPROVAL_CLI = join(dirname(CLI), 'plan-approval/cli.mjs');
+const STRUCTURE_CLI = join(dirname(CLI), 'plan-structure/cli.mjs');
 const LINK_REFUSALS = ['EPERM', 'EACCES', 'ENOTSUP'];
 const loadCli = () => import('./plan-shape-cli.mjs');
 const makeRepo = () => {
@@ -15,16 +20,17 @@ const makeRepo = () => {
   write(root, 'docs/readme.md', 'ten\n');
   return root;
 };
-const run = (root, args) => {
-  const env = { ...process.env };
+const run = (root, args, cli = CLI) => {
+  const env = stripGitLocationEnv(process.env);
   delete env.NODE_TEST_CONTEXT;
-  return spawnSync(process.execPath, [CLI, ...args], { cwd: root, env, encoding: 'utf8' });
+  delete env.AW_REVIEW_RECEIPTS;
+  return spawnSync(process.execPath, [cli, ...args], { cwd: root, env, encoding: 'utf8' });
 };
-const buildEpic = (ownedPath) => ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
-  'maxLines: 60', 'state: open', '---', '# Epic: Ownership', '## Intent', 'Keep ownership visible.',
-  '## Value', 'Keep work separate.', '## Non-goals', 'No implementation choices.', '## Acceptance', 'Result line: 2026-09-10',
-  '## Specs', 'docs/ai/specs/kit/example.md', '## Stories ledger',
-  `- S1 | Boundary | depends-on: none | owns: ${ownedPath} | shared: none | state: planned`, '## Queue', 'Row ALPHA in Now'].join('\n');
+const initRepo = (root) => makeFixtureRepo((args) => {
+  const result = spawnSync('git', args, { cwd: root, env: stripGitLocationEnv(process.env), encoding: 'utf8' });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+}, root);
 const planOf = (row) => planWith({ ledger: row });
 const checkExit = (root, operand, status) => {
   const result = run(root, ['--check', operand]);
@@ -34,7 +40,7 @@ const checkExit = (root, operand, status) => {
 };
 
 describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
-  it('judges story collisions in both arms and in-flight, and refuses every plan over a refused store', async (t) => {
+  it('spec:plan-shape-ownership/S15 named checks judge held claims and print start waits, never in-flight', async (t) => {
     await loadCli();
     const root = makeRepo();
     const outside = makeRepo();
@@ -43,13 +49,105 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     write(root, 'docs/x.md', 'Owned document.\n');
     const ledger = ledgerOf('R1 | modify | docs/x.md | update the document | docs/x.md:1');
     write(root, 'docs/plans/collide.md', planWith({ ledger }));
-    for (const args of [['--check', 'docs/plans/collide.md'], ['--verify', 'docs/plans/collide.md'], ['--check', '--in-flight']]) {
-      const result = run(root, args);
-      assert.ifError(result.error); assert.equal(result.status, 1, result.stderr); assert.match(result.stdout, /story-owns/);
+    const held = 'docs/plans/collide.md';
+    const named = 'docs/plans/mine.md';
+    const goal = '- Spec: docs/ai/specs/example.md\nStory: S1 of ALPHA';
+    initRepo(root);
+    checkExit(root, held, 0);
+    recordApproval(root, held);
+    write(root, named, planWith({ ledger, goal }));
+    const waiting = run(root, ['--check', named]);
+    assert.ifError(waiting.error);
+    assert.equal(waiting.status, 0, waiting.stderr || waiting.stdout);
+    assert.deepEqual(waiting.stdout.split('\n').filter((line) => line.includes('NOTE — wait:')), [
+      `plan-shape: NOTE — wait: ALPHA S1 owns docs/x.md meets ${held} path docs/x.md; wait for ${held}'s Cleanup, or narrow the claim if the story does not need the path`,
+    ]);
+    rmSync(join(root, held));
+    recordApproval(root, named);
+    write(root, held, planWith({ ledger }));
+    const collision = run(root, ['--check', held]);
+    assert.ifError(collision.error);
+    assert.equal(collision.status, 1, collision.stderr || collision.stdout);
+    assert.match(collision.stdout, /story-owns/);
+    assert.ok(collision.stdout.includes(`wait for ${named}'s Cleanup, or carry the change in ALPHA S1 (revise its plan; the yes is asked again)`));
+    const duplicate = 'docs/plans/duplicate.md';
+    write(root, duplicate, planWith({ goal }));
+    const same = run(root, ['--check', duplicate]);
+    assert.ifError(same.error);
+    assert.equal(same.status, 0, same.stderr || same.stdout);
+    assert.ok(same.stdout.includes(`plan-shape: NOTE — wait: ALPHA S1 is held by ${named}; carry the change in ${named} (revise it; the yes is asked again)`));
+    for (const arm of ['--check', '--verify']) {
+      const result = run(root, [arm, '--in-flight']);
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.doesNotMatch(result.stdout, /NOTE — wait:|story-owns/);
     }
-    write(root, 'docs/plans/mine.md', planWith({ ledger, goal: '- Spec: docs/ai/specs/example.md\nStory: S1 of ALPHA' }));
+    const record = join(root, '.git', 'agent-workflow-plan-approvals.jsonl');
+    rmSync(record);
+    mkdirSync(record);
+    assert.match(checkExit(root, named, 2), /agent-workflow-plan-approvals\.jsonl/);
+    checkExit(root, '--in-flight', 0);
+    rmSync(record, { recursive: true });
     const mine = run(root, ['--check', 'docs/plans/mine.md']);
     assert.ifError(mine.error); assert.equal(mine.status, 0, mine.stderr || mine.stdout);
+    const standalone = 'docs/standalone.md';
+    const essence = 'docs/essence.txt';
+    write(root, standalone, planWith());
+    write(root, essence, 'Keep the guide current.\n');
+    const expectPlanReadFailure = (name) => {
+      for (const [cli, args] of [[CLI, ['--check', standalone]], [APPROVAL_CLI, ['record', standalone, '--essence-file', essence]],
+        [APPROVAL_CLI, ['check', standalone]]]) {
+        const result = run(root, args, cli);
+        assert.ifError(result.error);
+        assert.equal(result.status, 2, result.stderr || result.stdout);
+        assert.ok((result.stderr + result.stdout).includes(name));
+      }
+      const structure = run(root, [standalone], STRUCTURE_CLI);
+      assert.ifError(structure.error);
+      assert.equal(structure.status, 0, structure.stderr || structure.stdout);
+      const verify = run(root, ['--verify', standalone]);
+      assert.ifError(verify.error);
+      assert.equal(verify.status, 0, verify.stderr || verify.stdout);
+    };
+    const unreadable = join(root, named);
+    const badPlan = 'docs/plans/unreadable.md';
+    write(root, badPlan, UNREADABLE_PLAN_BYTES);
+    expectPlanReadFailure(badPlan);
+    rmSync(join(root, badPlan));
+    const mode = statSync(unreadable).mode;
+    chmodSync(unreadable, 0);
+    try {
+      const denied = (() => {
+        try { readFileSync(unreadable); return false; } catch (error) { assert.equal(error.code, 'EACCES'); return true; }
+      })();
+      if (denied) expectPlanReadFailure(named);
+      else t.diagnostic('mode 0 allows reading the plan; unreadable-file case unavailable');
+    } finally { chmodSync(unreadable, mode); }
+    const plans = join(root, 'docs/plans');
+    const backup = join(outside, 'plans');
+    renameSync(plans, backup);
+    checkExit(root, standalone, 0);
+    try {
+      symlinkSync(backup, plans, 'dir');
+      expectPlanReadFailure('docs/plans');
+      rmSync(plans);
+    } catch (error) {
+      if (!LINK_REFUSALS.includes(error.code)) throw error;
+      t.diagnostic(`sandbox refused symlinkSync: ${error.code}: ${plans}`);
+    }
+    write(root, 'docs/plans', 'not a directory');
+    expectPlanReadFailure('docs/plans');
+    rmSync(plans);
+    renameSync(backup, plans);
+    const plansMode = statSync(plans).mode;
+    chmodSync(plans, 0);
+    try {
+      const denied = (() => {
+        try { statSync(join(plans, named.split('/').at(-1))); return false; } catch (error) { assert.equal(error.code, 'EACCES'); return true; }
+      })();
+      if (denied) expectPlanReadFailure('docs/plans');
+      else t.diagnostic('mode 0 allows reading the directory; unreadable-directory case unavailable');
+    } finally { chmodSync(plans, plansMode); }
     const store = join(root, 'docs/ai/epics');
     const target = join(outside, 'epics');
     renameSync(store, target);

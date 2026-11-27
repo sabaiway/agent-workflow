@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { describe, it } from 'node:test';
 import { canonicalFlowDigest } from '../flow-record-identity.mjs';
+import { expandClaim } from '../claim-relation.mjs';
 import { checkPlanStructure, parseLedger } from '../plan-shape.mjs';
 import { AMENDMENT_LINE } from '../plan-structure/index.mjs';
 import { planWith } from '../plan-shape-harness.test.mjs';
@@ -146,7 +147,7 @@ it('spec:plan-approval/S3 the door only re-exports its named owners without effe
   const reexports = /export\s*\{([^}]+)\}\s*from\s*['"](\.\/(?:entries|record)\.mjs)['"]\s*;?/g;
   const namedExports = [...source.matchAll(reexports)];
   assert.equal(source.replace(reexports, '').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').trim(), '');
-  for (const name of ['readApproval', 'appendApproval', 'getLocalDate', 'OUTCOME_LINES']) {
+  for (const name of ['readApproval', 'appendApproval', 'getLocalDate', 'OUTCOME_LINES', 'readApprovalFacts']) {
     assert.ok(namedExports.some(([, names, owner]) => owner === './record.mjs' && names.split(',').map((value) => value.trim()).includes(name)), name);
   }
   for (const name of ['readApproval', 'OUTCOME_LINES']) {
@@ -169,6 +170,8 @@ it('spec:plan-approval/S3 the door only re-exports its named owners without effe
     ['SPEC_SCHEMA', '../../references/scripts/spec-schema/index.mjs'],
   ]) assert.ok(imports.some(([, names, path]) => path === owner && new RegExp(`\\b${name}\\b`).test(names)), name);
   assert.doesNotMatch(entries, /\b(?:judgePlan|checkPlanStructure)\b/);
+  const factsSource = fs.readFileSync(new URL('../plan-shape-facts.mjs', door), 'utf8');
+  assert.doesNotMatch(factsSource, /(?:from\s*|import\s*\(?\s*)['"][^'"]*plan-approval\//);
 
   const effects = [];
   const isLoaderRead = (stack) => /node:internal\/modules\//.test(stack)
@@ -197,7 +200,7 @@ it('spec:plan-approval/S3 the door only re-exports its named owners without effe
       const exports = await import(`${door.href}?attempt=${attempt}`);
       assert.deepEqual(Object.keys(exports).sort(), [
         'APPROVAL_RECORD_BASENAME', 'OUTCOME_LINES', 'appendApproval', 'approvedParts', 'composeEntry', 'digestContract',
-        'digestPlan', 'findMatch', 'getLocalDate', 'parseEntries', 'readApproval',
+        'digestPlan', 'findMatch', 'getLocalDate', 'parseEntries', 'readApproval', 'readApprovalFacts',
       ]);
       assert.equal(exports.APPROVAL_RECORD_BASENAME, 'agent-workflow-plan-approvals.jsonl');
     }
@@ -209,8 +212,31 @@ it('spec:plan-approval/S3 the door only re-exports its named owners without effe
   const recordExports = await import('./record.mjs');
   const doorExports = await import(door.href);
   const cliExports = await import('./cli.mjs');
-  for (const name of ['readApproval', 'appendApproval', 'getLocalDate', 'OUTCOME_LINES']) assert.equal(doorExports[name], recordExports[name], name);
+  for (const name of ['readApproval', 'appendApproval', 'getLocalDate', 'OUTCOME_LINES', 'readApprovalFacts']) assert.equal(doorExports[name], recordExports[name], name);
   for (const name of ['readApproval', 'OUTCOME_LINES']) assert.equal(cliExports[name], recordExports[name], name);
+});
+
+it('spec:plan-approval/S11 digests sorted story claims and preserves the three-part storyless digest', async () => {
+  const { approvedParts, digestPlan } = await import('./index.mjs');
+  const text = PLAN.replace(GOAL, GOAL + '\nStory: S1 of ALPHA');
+  const owns = ['docs/extra.md', 'docs/guide.md'];
+  const shared = ['reference/guide.md', 'reference/appendix.md'];
+  const verdict = (owned = owns, common = shared) => ({
+    ...verdictOf(text), story: { path: 'docs/ai/epics/ALPHA.md', id: 'S1', line: 20, state: 'planned', reachable: new Set(),
+      claims: [...owned.map((path) => ({ field: 'owns', path, ground: expandClaim(path) })), ...common.map((path) => ({ field: 'shared', path, ground: expandClaim(path) }))] },
+  });
+  const parts = approvedParts(text, verdict());
+  assert.deepEqual(parts.claims, { owns: [...owns].sort(), shared: [...shared].sort() });
+  const original = digestPlan(text, verdict());
+  assert.equal(original, canonicalFlowDigest(parts));
+  assert.equal(digestPlan(text, verdict([...owns].reverse(), [...shared].reverse())), original);
+  for (const changed of [verdict(['docs/']), verdict(owns.slice(0, 1)), verdict(owns.slice(0, 1), [...shared, owns[1]])]) {
+    assert.notEqual(digestPlan(text, changed), original);
+  }
+  assert.equal(digestPlan(text, verdict([...owns], [...shared])), original);
+  const { goal, rows, verification } = approvedParts(PLAN, verdictOf(PLAN));
+  assert.deepEqual(Object.keys(approvedParts(PLAN, verdictOf(PLAN))).sort(), ['goal', 'rows', 'verification']);
+  assert.equal(digestPlan(PLAN, verdictOf(PLAN)), canonicalFlowDigest({ goal, rows, verification }));
 });
 
 it('spec:plan-approval/S6 matches provision by plan digest alone and approval by both digests', async () => {

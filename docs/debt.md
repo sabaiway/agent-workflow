@@ -3,6 +3,15 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **APPEND-APPROVAL-ACCEPTS-A-START-GROUND-WITH-NO-STORIES** — invariant: an approval entry is appended only with
+  its whole start ground. Origin: `agent-workflow-kit/tools/plan-approval/record.mjs` `appendApproval`'s usage guard
+  checks `start.own` and `start.otherPlans` for an approval entry but not `start.stories`, and `checkStoryStart`
+  (`agent-workflow-kit/tools/plan-shape-ownership.mjs`) defaults it to `[]`, so a direct caller that omits it reads a
+  cross-epic shared overlap as a wait (codex and agy, the diff review of PLANNED-CLAIM S1). Direction: the guard
+  also requires `Array.isArray(start.stories)`, with a cell beside the S12 door cells of
+  `plan-approval/cli.test.mjs`. Residual: none live; the one approval-origin caller, `recordApproval`, passes the
+  verdict's stories.
+
 - **RULES-MODE-SIZE-ROUTE-RUNS-THE-RULES-ENSURE-FIRST** — invariant: a request that only changes a size limit writes
   no rules file and no rules record. Origin: `agent-workflow-kit/references/modes/rules.md:9` (step 1 runs the
   `--only rules` ensure before any route) against `:16` (the size route ends with no merge or record), so a kit file

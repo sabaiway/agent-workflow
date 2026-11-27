@@ -41,7 +41,7 @@ export const OUTCOME_LINES = Object.freeze({
   usage: (reason) => `Usage: node ${display(CLI_TOKEN)} <slot file> | ${WRITE} <slot file> ${STAGE_FLAG} <id> [--plan <path>] [--queue-row <id>] [${DECISIONS_FLAG} <path>#<heading>]... | ${DISPATCH} <plan> — ${display(reason)}`,
   cannotRender: (subject, reason) => `stage-render: CANNOT RENDER — ${display(subject)}: ${display(reason)}; ${UPGRADE}`,
   refused: (subject, reason) => `stage-render: REFUSE — ${display(subject)}: ${display(reason)}`,
-  unapproved: (stage, plan, reason) => `stage-render: REFUSE — ${display(stage)} for ${display(plan)} waits for its approval record, so the stage is ${WAITING_STAGE}; ${APPROVAL_LINES.refused(plan, reason)}`,
+  unapproved: (stage, plan, reason, needsRecording) => `stage-render: REFUSE — ${display(stage)}: the plan ${display(plan)} does not pass its approval check${needsRecording ? `; the stage is ${WAITING_STAGE}` : ''}; ${APPROVAL_LINES.refused(plan, reason)}`,
   finding: (plan, finding) => APPROVAL_LINES.finding(plan, finding),
   malformed: (recordPath, line) => APPROVAL_LINES.malformed(recordPath, line),
   unlocated: (reason) => `stage-render: ERROR — cannot locate the git directory of ${STAGE_RECORD_BASENAME}: ${display(reason)}`,
@@ -122,7 +122,7 @@ const requireApproval = ({ cwd, env, stderr }, plan, stage) => {
     return approval;
   }
   const findings = (approval.verdict?.result.findings ?? []).map((finding) => OUTCOME_LINES.finding(plan, finding));
-  throw halt(EXIT_REFUSE, [OUTCOME_LINES.unapproved(stage, plan, approval.reason), ...malformed, ...findings]);
+  throw halt(EXIT_REFUSE, [OUTCOME_LINES.unapproved(stage, plan, approval.reason, approval.needsRecording), ...malformed, ...findings]);
 };
 
 const readCanon = (env) => {

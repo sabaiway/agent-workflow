@@ -17,6 +17,30 @@ const OPT_IN = 'The opening sentence has a rung too: append `--require-names` an
 // and produced a 690-line plan for a 587-line change. A rule earns a pin here only when its loss
 // would let a plan grow again.
 describe('planning.md — the plan shape', () => {
+  it('spec:plan-shape-ownership/S16 names running claims, the first yes and the routes before the ask', () => {
+    const section = flat.split('## The epic')[1].split('## The task')[0];
+    for (const rule of [
+      /a claim binds only while a plan carrying its story holds a yes on its current text/i,
+      /the first recorded yes wins/i,
+      /wait for .*Cleanup.*carry the change in/i,
+      /declare a transitive depends-on order between the stories/i,
+      /name the story that carries the file/i,
+      /narrow the claim if the story does not need the path/i,
+      /carry the change in .*revise it; the yes is asked again/i,
+      /claim the path in .*row/i,
+      /approved part.*edited.*yes is asked again at once|yes is asked again at once.*approved part.*edited/i,
+      /wait note.*yes is not asked.*check.*no wait/i,
+      /before a plan is drafted.*Research.*claims of running stories.*intended paths/i,
+      /held plans whose rows meet .*claims.*same next steps/i,
+    ]) assert.match(section, rule);
+  });
+
+  it('spec:plan-structure/S12 re-records a claim-taking amendment before work under it', () => {
+    const paragraph = flat.split('**A ledger-only miss found after the approval is an amendment entry.**')[1].split('## Verification')[0];
+    assert.match(paragraph, /takes the epic row's claim first.*recorded again from its essence file/i);
+    assert.match(paragraph, /no new ask before any work under .*amendment/i);
+    assert.match(paragraph, /record meets the start rule/i);
+  });
   it('verifies the plan before Cleanup migrates or deletes it and excludes review receipts from the slug grep', () => {
     assert.match(flat, /plan-shape-cli\.mjs --verify <plan>` FIRST, before anything is migrated or deleted/);
     assert.match(flat, /grep -rn "<slug>" \. --exclude-dir=\.git/);

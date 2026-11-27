@@ -1,10 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { EPIC_SECTIONS } from './epic-shape.mjs';
-import { checkPlan, parseLedger, verifyPlan } from './plan-shape.mjs';
-import { codes, ledgerOf, makeTree as makeNamedTree, planWith, write, writeJson } from './plan-shape-harness.test.mjs';
+import { checkPlan, checkPlanStructure, parseLedger, verifyPlan } from './plan-shape.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { canonicalFlowDigest } from './flow-record-identity.mjs';
+import { codes, ledgerOf, makeTree as makeNamedTree, planWith, UNREADABLE_PLAN_BYTES, write, writeJson } from './plan-shape-harness.test.mjs';
 import { FRONT, indexDoc, specDoc, STORE } from './spec-check-harness.test.mjs';
 
 const loadFacts = () => import('./plan-shape-facts.mjs');
@@ -41,6 +45,128 @@ const makeEpicText = () => {
   return ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
     'maxLines: 60', 'state: open', '---', '# Epic: Boundary', ...EPIC_SECTIONS.flatMap((heading, index) => [heading, bodies[index]])].join('\n');
 };
+
+it('spec:plan-shape-ownership/S12 reads other plans without recursion and holds only current digests', async (t) => {
+  const { buildFacts, judgePlan, readPlanDocument } = await loadFacts();
+  const { digestPlan, composeEntry, readApprovalFacts, APPROVAL_RECORD_BASENAME } = await import('./plan-approval/index.mjs');
+  assert.equal(typeof readApprovalFacts, 'function');
+  const root = makeCleanTree(t);
+  const current = 'docs/plans/current.md';
+  const other = 'docs/plans/other.md';
+  const renamed = 'docs/plans/renamed.md';
+  const draft = 'docs/plans/draft.md';
+  const story = { epic: 'ALPHA', id: 'S1' };
+  const env = stripGitLocationEnv(process.env);
+  delete env.AW_REVIEW_RECEIPTS;
+  const approvalFacts = { digestPlan, heldDigests: new Set() };
+  assert.equal(Object.hasOwn(buildFacts(root, { plan: current, approvalFacts }), 'otherPlans'), true);
+  assert.deepEqual(buildFacts(root, { plan: current, approvalFacts }).otherPlans, []);
+  write(root, 'docs/ai/epics/ALPHA.md', makeEpicText());
+  for (const path of ['src/x.mjs', 'src/y.mjs', 'src/z.mjs', 'docs/readme.md']) write(root, path, 'content\n');
+  const text = planWith({ goal: 'Spec: not adopted.\nStory: S1 of ALPHA',
+    ledger: 'R1 | modify | src/[xy].mjs | update (2 files) | src/x.mjs:1\namendments:\nA1 | modify | src/z.mjs | update | src/x.mjs:1' });
+  write(root, other, text);
+  write(root, current, planWith());
+  write(root, draft, planWith({ goal: 'Spec: not adopted. Another draft.' }));
+  write(root, 'docs/plans/broken.md', planWith({ verification: 'plain prose' }));
+  const document = readPlanDocument(root, current);
+  const verdict = judgePlan(root, readPlanDocument(root, other));
+  assert.equal(verdict.accepted, true, JSON.stringify(verdict.result.findings));
+  assert.deepEqual(verdict.story, buildFacts(root).stories[0]);
+  assert.equal(judgePlan(root, document).story, null);
+  const digest = digestPlan(text, verdict);
+  const draftVerdict = judgePlan(root, readPlanDocument(root, draft));
+  const draftDigest = digestPlan(draftVerdict.text, draftVerdict);
+  approvalFacts.heldDigests.add(digest);
+  const expected = { identity: other, digest, held: true, story, paths: ['src/x.mjs', 'src/y.mjs', 'src/z.mjs'] };
+  const expectedDraft = { identity: draft, digest: draftDigest, held: false, story: null, paths: ['docs/readme.md'] };
+  const readOthers = (facts = approvalFacts) => [...buildFacts(root, { plan: current, approvalFacts: facts }).otherPlans]
+    .map((plan) => ({ ...plan, paths: [...plan.paths].sort() })).sort((left, right) => left.identity.localeCompare(right.identity));
+  assert.deepEqual(readOthers(), [expectedDraft, expected]);
+  for (const options of [{}, { plan: current }, { approvalFacts }, { plan: current, approvalFacts }]) {
+    const named = Object.hasOwn(options, 'plan') && Object.hasOwn(options, 'approvalFacts');
+    assert.equal(Object.hasOwn(buildFacts(root, options), 'otherPlans'), named);
+    const rules = (body, facts) => {
+      assert.equal(Object.hasOwn(facts, 'otherPlans'), named);
+      return checkPlanStructure(body, facts);
+    };
+    assert.equal(judgePlan(root, document, { ...options, rules }).accepted, true);
+  }
+  renameSync(join(root, other), join(root, renamed));
+  assert.deepEqual(readOthers(), [expectedDraft, { ...expected, identity: renamed }]);
+  write(root, other, text.replace('update (2 files)', 'revise (2 files)'));
+  const reused = readOthers().find(({ identity }) => identity === other);
+  assert.equal(reused.held, false);
+  assert.notEqual(reused.digest, digest);
+  write(root, 'docs/plans/copy.md', document.text);
+  assert.ok(!readOthers().some(({ identity }) => identity.endsWith('/copy.md')));
+  if (trySymlink(t, join(root, renamed), join(root, 'docs/plans/linked.md'))) {
+    assert.ok(!readOthers().some(({ identity }) => identity.endsWith('/linked.md')));
+  }
+  const outside = 'docs/outside.md';
+  const listOthers = (plan) => buildFacts(root, { plan, approvalFacts }).otherPlans.map(({ identity }) => identity);
+  assert.ok(listOthers(outside).includes(current));
+  write(root, outside, document.text);
+  assert.ok(!listOthers(outside).some((identity) => identity === current || identity.endsWith('/copy.md')));
+  rmSync(join(root, outside));
+  mkdirSync(join(root, outside));
+  assert.throws(() => listOthers(outside), (error) => error.message.includes(outside));
+  rmSync(join(root, outside), { recursive: true });
+  assert.deepEqual(readApprovalFacts({ cwd: root, env }).heldDigests, new Set());
+  const receipt = join(root, 'receipts', 'review.jsonl');
+  const record = join(root, 'receipts', APPROVAL_RECORD_BASENAME);
+  const entries = [digest, draftDigest].map((planDigest, index) => composeEntry({
+    plan: index === 0 ? other : draft, date: '2026-09-10', planDigest, contractsDigest: canonicalFlowDigest([]),
+    contracts: [], essence: 'Approved scope.', from: index === 0 ? 'approval' : 'provision',
+  }));
+  const recordText = entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
+  makeFixtureRepo((args) => {
+    const result = spawnSync('git', args, { cwd: root, env, encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+  }, root);
+  write(root, '.git/' + APPROVAL_RECORD_BASENAME, JSON.stringify(entries[0]) + '\n');
+  assert.deepEqual(readApprovalFacts({ cwd: root, env }).heldDigests, new Set([digest]));
+  write(root, 'receipts/' + APPROVAL_RECORD_BASENAME, recordText);
+  const override = { ...env, AW_REVIEW_RECEIPTS: receipt };
+  const recorded = readApprovalFacts({ cwd: root, env: override });
+  assert.equal(recorded.digestPlan, digestPlan);
+  assert.deepEqual(recorded.heldDigests, new Set([digest, draftDigest]));
+  assert.equal(readOthers(recorded).find(({ identity }) => identity === draft).held, true);
+  rmSync(record);
+  mkdirSync(record);
+  assert.throws(() => readApprovalFacts({ cwd: root, env: override }), (error) => error instanceof Error && error.message.includes(record));
+  const plans = join(root, 'docs/plans');
+  const saved = join(root, 'saved-plans');
+  renameSync(plans, saved);
+  assert.deepEqual(readOthers(), []);
+  if (trySymlink(t, saved, plans)) {
+    assert.throws(readOthers, { exitCode: 2, message: /docs\/plans/ });
+    rmSync(plans);
+  }
+  renameSync(saved, plans);
+  const mode = statSync(plans).mode;
+  chmodSync(plans, 0);
+  try {
+    const unreadable = (() => {
+      try { readdirSync(plans); return false; } catch (error) { assert.equal(error.code, 'EACCES'); return true; }
+    })();
+    if (unreadable) assert.throws(readOthers, { exitCode: 2, message: /docs\/plans/ });
+    else t.diagnostic('mode 0 allows listing docs/plans; unreadable-directory case unavailable');
+  } finally { chmodSync(plans, mode); }
+  const locked = join(root, renamed);
+  const lockedMode = statSync(locked).mode;
+  chmodSync(locked, 0);
+  try {
+    const unreadable = (() => {
+      try { readFileSync(locked); return false; } catch (error) { assert.equal(error.code, 'EACCES'); return true; }
+    })();
+    if (unreadable) assert.throws(readOthers, { exitCode: 2, message: /renamed\.md/ });
+    else t.diagnostic('mode 0 allows reading renamed.md; unreadable-plan case unavailable');
+  } finally { chmodSync(locked, lockedMode); }
+  write(root, renamed, UNREADABLE_PLAN_BYTES);
+  assert.throws(readOthers, { exitCode: 2, message: /renamed\.md/ });
+});
 
 describe('plan-shape facts — filesystem-only evidence', () => {
   it('spec:plan-shape-ownership/S10 snapshots open stories, names landed epics and carries store refusals', async (t) => {

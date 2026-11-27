@@ -42,3 +42,14 @@ ${phases}
 `;
 
 export const codes = (result) => result.findings.map((finding) => finding.code);
+export const UNREADABLE_PLAN_BYTES = Buffer.from([0xff]);
+export const makeOtherPlan = (overrides = {}) => ({
+  identity: 'docs/plans/other.md', digest: 'a'.repeat(64), held: true, story: null, paths: [], ...overrides,
+});
+
+export const buildStoryEpic = (claim, field = 'owns') => ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
+  'maxLines: 60', 'state: open', '---', '# Epic: Ownership', '## Intent', 'Keep ownership visible.',
+  '## Value', 'Keep work separate.', '## Non-goals', 'No implementation choices.', '## Acceptance', 'Result line: 2026-09-10',
+  '## Specs', 'docs/ai/specs/kit/example.md', '## Stories ledger',
+  `- S1 | Boundary | depends-on: none | owns: ${field === 'owns' ? claim : 'none'} | shared: ${field === 'shared' ? claim : 'none'} | state: planned`,
+  '## Queue', 'Row ALPHA in Now'].join('\n');

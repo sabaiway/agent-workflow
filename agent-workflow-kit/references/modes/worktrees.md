@@ -60,8 +60,10 @@ tokens, gets a neutral line naming them; orphanhood is claimed only where it is 
   When the match is MAIN's, its entry is appended to the worktree's own record as `from:
   provision` once the plan is seeded. With `AW_REVIEW_RECEIPTS` non-empty, fresh provision and
   `--resume` alike refuse at the record check before the first write, naming the variable and
-  asking that it be unset. Every other state refuses naming the record command
-  (`node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>`).
+  asking that it be unset. Where no worktree exists yet, MAIN is the read; otherwise MAIN is
+  consulted only when the worktree's own read reports no entry for the current plan digest. Every
+  other state refuses with plan-approval's refused line, its cause's own step included (the record
+  command only where that step is recording).
   `--stage <id>` (one of the record-gated stages `tests`, `code`, `diff-review`, `split-edits`;
   `tests` when absent; any other id is a usage STOP) names the stage the worktree's slot file
   `docs/plans/next-session.json` carries (spec `kit/stage-render`). Provision composes it with the

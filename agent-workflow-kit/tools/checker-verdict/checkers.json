@@ -1796,6 +1796,14 @@
         "check",
         "docs/plans/fixture.md"
       ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-approval/cli.mjs",
+      "arguments": [
+        "check",
+        "docs/plans/fixture.md"
+      ],
       "faultPoint": "spawn"
     },
     {
@@ -1813,6 +1821,22 @@
         "docs/plans/fixture.md"
       ],
       "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "spawn"
     },
     {
       "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",

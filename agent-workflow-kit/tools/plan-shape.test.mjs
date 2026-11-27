@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { codes, DEFAULT_ROW, ledgerOf, LEGACY_ROW, planWith } from './plan-shape-harness.test.mjs';
+import { codes, DEFAULT_ROW, ledgerOf, LEGACY_ROW, makeOtherPlan, planWith } from './plan-shape-harness.test.mjs';
 import { expandClaim } from './claim-relation.mjs';
 import { escapeForLine } from './source-size-core.mjs';
 
@@ -52,14 +52,31 @@ const countCases = () => [
 ];
 
 describe('plan-shape rules — structural and authoring state', () => {
-  it('spec:plan-shape-ownership/S11 judges story ownership in every arm and leaves bare facts unjudged', async () => {
+  it('spec:plan-shape-ownership/S11 leaves collisions unjudged without approval facts and keeps scope and store rules', async () => {
     const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
     const facts = factsFor({ stories: [{ path: 'docs/ai/epics/ALPHA.md', id: 'S1', line: 20, state: 'planned',
       claims: [{ field: 'owns', path: 'docs/readme.md', ground: expandClaim('docs/readme.md') }], reachable: new Set() }],
       landedEpics: [], storeRefusal: null });
     for (const judge of [checkPlan, verifyPlan, checkPlanStructure]) {
-      assert.deepEqual(codes(judge(planWith(), facts)), ['story-owns']);
+      assert.deepEqual(codes(judge(planWith(), facts)), []);
       assert.deepEqual(codes(judge(planWith(), factsFor())), []);
+      const held = makeOtherPlan({ story: { epic: 'ALPHA', id: 'S1' } });
+      assert.deepEqual(codes(judge(planWith(), { ...facts, otherPlans: [held] })), ['story-owns']);
+      assert.deepEqual(codes(judge(planWith(), factsFor({ otherPlans: [held] }))), []);
+      const named = planWith({ goal: 'Spec: not adopted.\nStory: S1 of ALPHA' });
+      const sibling = { ...facts.stories[0], id: 'S2' };
+      assert.deepEqual(codes(judge(named, { ...facts, stories: [...facts.stories, sibling] })), []);
+      const scopeFacts = factsFor({ ...facts, stories: [{ ...facts.stories[0], claims: [] }],
+        pathFacts: { 'docs/readme.md': { ...facts.pathFacts['docs/readme.md'], inScope: true } } });
+      assert.deepEqual(codes(judge(named, scopeFacts)), ['story-scope']);
+      assert.deepEqual(codes(judge(named, { ...scopeFacts, stories: [] })), ['story-unknown']);
+      assert.deepEqual(codes(judge(named, { ...scopeFacts, stories: [], landedEpics: ['ALPHA'] })), ['story-epic-landed']);
+      assert.deepEqual(codes(judge(named, { ...scopeFacts, storeRefusal: 'docs/ai/epics: unreadable' })), ['story-store']);
+      const bare = judge(named, factsFor({ pathFacts: scopeFacts.pathFacts }));
+      assert.deepEqual(codes(bare), []);
+      assert.equal(bare.story, null);
+      assert.deepEqual(judge(named, facts).story, facts.stories[0]);
+      assert.equal(judge(planWith(), facts).story, null);
       const text = '---\nowner: none\n---\n' + planWith({ goal: '- Spec: docs/ai/specs/example.md\nStory: S1 of ALPHA\nStory: S1 of ALPHA' });
       assert.deepEqual(judge(text, facts).findings.map(({ line, code }) => ({ line, code })), [{ line: 9, code: 'story-line' }]);
     }
@@ -411,7 +428,9 @@ describe('plan-shape rules — structural and authoring state', () => {
     const details = (result) => result.findings.map(({ code, rowId }) => [code, rowId]);
     assert.deepEqual(details(checkPlanStructure(buildPlan([approvedRow], [row('A1', 'modify', files[0], 'x'.repeat(201))]), facts)), [['row-bytes', 'A1']]);
     assert.deepEqual(details(checkPlanStructure(buildPlan([approvedRow], ['A1 | modify | src/a.mjs | update']), facts)), [['row-grammar', 'A1']]);
-    assert.deepEqual(details(checkPlanStructure(buildPlan([approvedRow], [row('A1', 'modify', 'docs/owned.md')], goal), storyFacts)), [['story-owns', 'A1']]);
+    const storyAmendment = buildPlan([approvedRow], [row('A1', 'modify', 'docs/owned.md')], goal);
+    assert.deepEqual(details(checkPlanStructure(storyAmendment, { ...storyFacts, otherPlans: [makeOtherPlan({ story: { epic: 'ALPHA', id: 'S1' } })] })), [['story-owns', 'A1']]);
+    assert.deepEqual(details(checkPlanStructure(storyAmendment, storyFacts)), []);
     for (const verb of ['create', 'modify', 'delete']) {
       const plan = buildPlan([row('R1', 'modify', files[0])], [row('A1', verb, files[1])]);
       for (const kind of ['regular', 'absent']) {

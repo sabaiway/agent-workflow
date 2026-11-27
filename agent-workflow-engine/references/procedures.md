@@ -25,9 +25,10 @@ slot file is absent or refused, the slot file names a record-gated stage whose p
 record, or a valid slot file names another plan or another stage than the session was explicitly opened
 for (a plan or stage the session did not name is no difference). For a stage needing a plan, take
 the one plan the session was opened for, or, if none, the plan the valid slot file names. With no
-matching record, write `waiting-on-approval` when the named stage is record-gated or none was
-named; a stage that is not record-gated is written as named. With a matching record, write the stage
-the session was opened for, or `tests`, the first stage after an approval, when none was named.
+matching record, write `waiting-on-approval` only when the approval check names recording or a new
+yes as its next step and the named stage is record-gated or none was named. Follow every other
+refusal's step and check again before rendering; a stage that is not record-gated is written as
+named. With a matching record, write the stage the session was opened for, or `tests`, the first stage after an approval, when none was named.
 A stage whose slots name no plan is written as named. Refuse and ask which plan only if none is
 found and the session named no stage or a stage needing a plan, or if it named several plans where
 the stage needs one. Write
@@ -108,12 +109,14 @@ Slots: author, fold, review
    plan, then present its essence with its contracts in the dialogue language the user set in the kit:
    what the user gets, what changes and where, what is not done, the declared residuals and risks,
    the release and any hand step — short and plain, no internal id and no important detail lost.
-   Carry any note that run prints when presenting the plan for approval. If it prints none, drop the
+   If `--check <plan>` prints a wait note, no yes is asked until the check runs again with no wait.
+   Carry any other note that run prints when presenting the plan for approval. If it prints none, drop the
    earlier note. Save the essence shown in `docs/plans/<plan stem>-essence.txt`; on the chat yes run
    `node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>`. A change the user
    decides anew takes a new yes and a new record; an amendment entry or a robust tag fixed before a
-   dispatch takes no new yes or record. A lost record for a plan and contracts still as approved is
-   written again from the essence file, never by asking again.
+   dispatch takes no new yes or record. If an amendment changes the story's claims, record the plan
+   again from its essence file before any work under the amendment, with no new ask. A lost record for
+   a plan and contracts still as approved is written again from the essence file, never by asking again.
    Never execute here: a harness "approved — start coding" prompt
    (**ExitPlanMode**) authorizes the PLAN only; `plan-execution` is a deliberate transition once
    the plan's approval record and next-session line exist.

@@ -13,6 +13,7 @@ import {
   APPROVED_PLAN_BODY, recordApproval, writeApprovedContractPlan, writeApprovedPlan,
 } from './plan-approval/approved-plan-harness.test.mjs';
 import { stripGitLocationEnv } from './git-env.mjs';
+import { UNREADABLE_PLAN_BYTES } from './plan-shape-harness.test.mjs';
 import { EPIC_SECTIONS } from './epic-shape.mjs';
 import { isSeedablePathToken, shellQuoteArg } from './repo-lex.mjs';
 import { promptCommands } from './worktree-prompt.mjs';
@@ -1096,6 +1097,7 @@ const expectBeforeAdd = (fixture, extra, finding) => {
   assert.match(result.errText, finding);
   assert.ok(!calls.some((call) => call.startsWith('worktree add')));
   assert.ok(!existsSync(fixture.wt));
+  return result;
 };
 const expectNoPlacement = ({ wt, slug }) => {
   assert.ok(!existsSync(join(wt, 'AGENTS.md')));
@@ -1165,6 +1167,36 @@ describe('spec:plan-approval/S9 worktrees provision checks and carries the plan 
     assert.equal(result.code, EXIT.stop, result.errText);
     assert.ok(result.errText.includes(approvalPath(fixture.wt)), result.errText);
     expectNoPlacement(fixture);
+  });
+  it('stops on a worktree structure refusal even when MAIN would accept the same instance', async () => {
+    const fixture = makeProvision('approval-local-claim');
+    createUnprovisioned(fixture);
+    const { epic, body } = writeStoriedSeed(fixture.wt);
+    rmSync(join(fixture.wt, SEED_PLAN));
+    const held = 'docs/plans/running.md';
+    mkdirSync(join(fixture.root, dirname(epic)), { recursive: true });
+    writeFileSync(join(fixture.root, epic), readFileSync(join(fixture.wt, epic)));
+    writeFileSync(join(fixture.root, held), body);
+    const { readApproval } = await import('./plan-approval/index.mjs');
+    const env = stripGitLocationEnv(process.env);
+    const mainEnv = { ...env, AW_REVIEW_RECEIPTS: join(dirname(approvalPath(fixture.root)), 'agent-workflow-review-receipts.jsonl') };
+    assert.equal(readApproval({ cwd: fixture.root, env: mainEnv, plan: SEED_PLAN }).exitCode, 0);
+    const before = readFileSync(approvalPath(fixture.wt));
+    const result = provision(fixture, ['--resume']);
+    assert.equal(result.code, EXIT.stop, result.errText);
+    assert.match(result.errText, /story-owns/);
+    assert.ok(result.errText.includes(`wait for ${held}'s Cleanup, or carry the change in ALPHA S1 (revise its plan; the yes is asked again)`));
+    assert.doesNotMatch(result.errText, /plan-approval\/cli\.mjs record/);
+    expectNoPlacement(fixture);
+    assert.deepEqual(readFileSync(approvalPath(fixture.wt)), before);
+    rmSync(join(fixture.root, held));
+    const unreadable = 'docs/plans/unreadable.md';
+    writeFileSync(join(fixture.root, unreadable), UNREADABLE_PLAN_BYTES);
+    const cannotRead = provision(fixture, ['--resume']);
+    assert.equal(cannotRead.code, EXIT.stop, cannotRead.errText);
+    assert.ok(cannotRead.errText.includes(unreadable), cannotRead.errText);
+    expectNoPlacement(fixture);
+    assert.deepEqual(readFileSync(approvalPath(fixture.wt)), before);
   });
   for (const resume of [false, true]) {
     it(`refuses ${resume ? '--resume' : 'a fresh provision'} before any write while AW_REVIEW_RECEIPTS is set`, () => {
@@ -1240,13 +1272,16 @@ describe('spec:plan-approval/S9 worktrees provision checks and carries the plan 
         const result = provision(fixture, ['--resume']);
         assert.equal(result.code, EXIT.stop, result.errText);
         assert.ok(result.errText.includes(epic), result.errText);
+        assert.match(result.errText, /story-store/);
+        assert.doesNotMatch(result.errText, /plan-approval\/cli\.mjs record/);
         expectNoPlacement(fixture);
         expectCarried(fixture);
         assert.deepEqual(readFileSync(join(fixture.wt, SLOT_FILE)), slotBytes);
         assert.equal(readFileSync(join(fixture.wt, fixture.plan), 'utf8'), body);
       } else {
         writeFileSync(join(fixture.root, epic), readFileSync(join(fixture.root, epic), 'utf8').replace('## Stories ledger', '## Broken ledger'));
-        expectBeforeAdd(fixture, [], /ALPHA\.md/);
+        const result = expectBeforeAdd(fixture, [], /story-store.*ALPHA\.md/);
+        assert.doesNotMatch(result.errText, /plan-approval\/cli\.mjs record/);
       }
       assert.equal(readFileSync(join(fixture.root, SEED_PLAN), 'utf8'), body);
     });

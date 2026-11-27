@@ -89,7 +89,6 @@ const SLOT_FILE_REL = `${PLANS_REL}/next-session.json`;
 const DEFAULT_STAGE = 'tests';
 const STAGES_ABS = join(dirname(WORKTREES_TOOL_DIR), STAGES_REL);
 const TOOL_EXIT_OK = 0;
-const TOOL_EXIT_USAGE = 2;
 
 const USAGE = [
   'usage: worktrees.mjs <subcommand> [args]',
@@ -1523,9 +1522,8 @@ const placedInstance = ({ root, wtRoot, planFlag, seedName, fs }) => {
   return lstatNoFollow(fs.lstat, join(wtRoot, placed)) === null ? { cwd: root, plan: planFlag } : { cwd: wtRoot, plan: placed };
 };
 
-// The match is the work tree's own record first, then MAIN's, whose contracts are digested in MAIN; MAIN's
-// matching entry is returned to be carried, null when the work tree already holds one. An unreadable
-// work-tree record never falls back.
+// MAIN's contracts are digested in MAIN; its matching entry is returned to be carried,
+// null when the work tree already holds one. Only a missing local digest permits the fallback.
 const requireInstanceApproval = ({ instance, root, worktreeGitDir, mainGitDir, report }) => {
   if (process.env.AW_REVIEW_RECEIPTS) {
     throw stop('provision refuses: AW_REVIEW_RECEIPTS is set, so the worktree\'s plan approval record would be MAIN\'s own file — unset it, then re-run');
@@ -1540,10 +1538,10 @@ const requireInstanceApproval = ({ instance, root, worktreeGitDir, mainGitDir, r
     accept(local);
     return null;
   }
-  const result = local?.exitCode === TOOL_EXIT_USAGE ? local : read(mainGitDir, root);
+  const result = local === null || local.missingEntry ? read(mainGitDir, root) : local;
   if (result.exitCode === TOOL_EXIT_OK) return accept(result);
   throw stop([
-    `provision refuses: the plan ${displayValue(instance.plan)} has no matching approval record in ${worktreeGitDir === null ? 'MAIN' : 'this worktree or in MAIN'} — a worktree is provisioned only for an approved plan`,
+    `provision refuses: the plan ${displayValue(instance.plan)} does not pass its approval check`,
     APPROVAL_LINES.refused(instance.plan, result.reason),
     ...approvalLines(instance.plan, result),
   ].join('\n'));

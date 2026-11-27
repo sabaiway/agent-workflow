@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { safeLine } from './carriers.mjs';
 import { stripGitLocationEnv } from './git-env.mjs';
 import { APPROVED_PLAN_BODY } from './plan-approval/approved-plan-harness.test.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const loaded = await import('./session-close-check.mjs').catch(() => ({}));
 const ABSENT = 'session-close-check.mjs main is absent';
@@ -317,6 +318,10 @@ describe('spec:session-rules/S17 the next-session block accepts on one conjuncti
   });
 
   it('the render of that same tests slot file refuses without an approval record', () => {
+    makeFixtureRepo((args) => {
+      const result = spawnSync('git', args, { encoding: 'utf8', env: cleanEnv() });
+      assert.equal(result.status, 0, result.stderr);
+    }, root, ['--quiet']);
     const rendered = spawnSync(process.execPath, [join(HERE, 'stage-render/cli.mjs'), SLOT], {
       cwd: root, encoding: 'utf8', env: { ...cleanEnv(), AGENT_WORKFLOW_ENGINE_DIR: resolve(HERE, '../../agent-workflow-engine') },
     });

@@ -144,9 +144,11 @@ approved contract unchanged. An entry takes no new approval and the diff review'
 The 45 rows, the 60-line ledger and the 100-line plan measure the approved part only. An entry
 repeats no path, including a path in an approved sweep's expansion. A missed reader's existing test
 is rewritten to the value the approved contract states and shown red first. A missed reader that
-needs a new test returns to a tests-only session. A path no claim of the story covers takes the epic row's
-claim first; a path another story owns, a change of an approved contract, a new Module and a new file
-under an approved sweep's glob return to the spec review. Mid-flow,
+needs a new test returns to a tests-only session. A path no claim of the story covers takes the epic
+row's claim first. An entry that takes the epic row's claim first changes the approved claims, so the
+plan is recorded again from its essence file, with no new ask before any work under the amendment;
+that record meets the start rule. A path another story owns, a change of an approved contract, a new
+Module and a new file under an approved sweep's glob return to the spec review. Mid-flow,
 `node <kit>/tools/plan-structure/cli.mjs <plan>` judges the plan's structure and prints every entry.
 
 ## Verification
@@ -229,6 +231,21 @@ at concept altitude, so no bridge run is spent on an epic. The findings that com
 through the fold ask by the same predicate (`--fold`), a fold of the second round is re-read by the lens
 or taken to the maintainer with the go, and `--close` lands the epic only when every story has landed,
 the result line is a date and the queue row is gone.
+
+A claim binds only while a plan carrying its story holds a yes on its current text; a landed story's
+claim is free ground. The first recorded yes wins. For an owns overlap, wait for the running plan's
+Cleanup, or carry the change in its story (revise its plan; the yes is asked again). For shared overlap
+in one epic, wait for Cleanup or declare a transitive depends-on order between the stories; for a
+storyless plan, wait for Cleanup or name the story that carries the file. Shared overlap across epics
+does not refuse a story plan. When starting a story whose claim meets a held plan's path, wait for
+that plan's Cleanup or narrow the claim if the story does not need the path; for shared overlap in
+one epic, the same order route applies. If the story is already held by another plan, carry the
+change in that plan (revise it; the yes is asked again). For a path outside the story's claims but
+inside the declared practice, claim the path in the story's row. When an approved part is edited,
+the yes is asked again at once. A wait note from the named-plan check means the yes is not asked
+until the check runs again with no wait. Before a plan is drafted, its Research lists the claims of
+running stories over the intended paths and, for a story plan, the held plans whose rows meet its
+story's claims, with the same next steps.
 
 ## The task
 

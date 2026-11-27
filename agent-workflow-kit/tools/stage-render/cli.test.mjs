@@ -10,7 +10,7 @@ import { checkEpic, EPIC_SECTIONS } from '../epic-shape.mjs';
 import { stripGitLocationEnv } from '../git-env.mjs';
 import { PLANS_REL } from '../plan-files.mjs';
 import { judgePlan, readPlanDocument } from '../plan-shape-facts.mjs';
-import { makeTree, planWith, write, writeJson } from '../plan-shape-harness.test.mjs';
+import { makeTree, planWith, UNREADABLE_PLAN_BYTES, write, writeJson } from '../plan-shape-harness.test.mjs';
 import { escapeForDisplay, isSeedablePathToken, shellQuoteArg } from '../repo-lex.mjs';
 import { APPROVED_PLAN_BODY, recordApproval } from '../plan-approval/approved-plan-harness.test.mjs';
 
@@ -135,9 +135,18 @@ describe('spec:stage-render/S2 record-gated rendering checks the live structure'
       const refused = run(root, [SLOT]);
       expect(refused, 1);
       assert.ok(outputOf(refused).includes(EPIC), outputOf(refused));
+      assert.match(outputOf(refused), /story-store/);
+      assert.doesNotMatch(outputOf(refused), /plan-approval\/cli\.mjs\s+record\b|waiting-on-approval/);
       assertNoTemplate(refused, stage, FIXED_LINES);
       assert.deepEqual(fs.readFileSync(recordPath(root)), recorded);
       assert.deepEqual(fs.readFileSync(join(root, SLOT)), slotBytes);
+      write(root, EPIC, EPIC_BODY);
+      const unreadable = `${PLANS_REL}/unreadable.md`;
+      write(root, unreadable, UNREADABLE_PLAN_BYTES);
+      const cannotRead = run(root, [SLOT]);
+      expect(cannotRead, 1);
+      assert.ok(outputOf(cannotRead).includes(unreadable), outputOf(cannotRead));
+      assertNoTemplate(cannotRead, stage, FIXED_LINES);
     });
   }
 });

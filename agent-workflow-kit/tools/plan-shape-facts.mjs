@@ -5,12 +5,12 @@ import { readSpecDocument, SPEC_SCHEMA } from '../references/scripts/spec-schema
 import { lstatNoFollowRead, readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
 import { KIT_FOLDER_ROOT, segmentPrefixOf, validateSourceSizeConfig } from './source-size-config.mjs';
-import { checkPlanStructure, isSweep, parseLedger, PLAN_TITLE_PREFIX, resolveAnchorCandidates, unique } from './plan-shape.mjs';
+import { checkPlanStructure, getConcretePaths, isSweep, parseLedger, PLAN_TITLE_PREFIX, resolveAnchorCandidates, unique } from './plan-shape.mjs';
 import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 import { listStories } from './claim-relation.mjs';
 import { EPICS_REL, readEpicStore } from './epic-store.mjs';
 import { sweepSiblings } from './epic-shape-ledger.mjs';
-import { PIN_FILE } from './plan-shape-ownership.mjs';
+import { getStoryIdentity, PIN_FILE } from './plan-shape-ownership.mjs';
 import { NEVER_WALKED } from './repo-lex.mjs';
 export { isSweep };
 
@@ -322,14 +322,19 @@ const readFlightPlan = (repo, root, name) => {
 
 // A facts failure scoped to the plan's own paths is that plan's listed finding, so the other plans
 // are still judged; a repository-level refusal (the practice, a package, its pins) keeps its usage class.
-export const judgePlan = (root, { identity, text, rows }, { rules = checkPlanStructure, ...options } = {}) => {
+export const judgePlan = (root, document, { rules = checkPlanStructure, ...options } = {}) => {
+  const { identity, text, rows } = document;
   const paths = [...rows.map((row) => row.path), ...rows.map((row) => row.anchorPath).filter(Boolean)];
   try {
-    const result = rules(text, getFacts(root, { paths, ...options }));
-    return { identity, text, rows, result, accepted: result.findings.length === 0 };
+    const facts = getFacts(root, { paths, ...options, document });
+    const result = rules(text, facts);
+    const accepted = result.findings.length === 0;
+    return { identity, text, rows, result, accepted, story: result.story ?? null,
+      ...(accepted ? { paths: unique(rows.flatMap((row) => getConcretePaths(row, facts))) } : {}),
+      ...(Object.hasOwn(facts, 'otherPlans') ? { otherPlans: facts.otherPlans, stories: facts.stories } : {}) };
   } catch (error) {
     if (error?.scope !== 'plan') throw error;
-    return { identity, text, rows, accepted: false, result: { findings: [{ line: 1, code: 'facts', message: error.message, rowId: null }], skips: [] } };
+    return { identity, text, rows, story: null, accepted: false, result: { findings: [{ line: 1, code: 'facts', message: error.message, rowId: null }], skips: [] } };
   }
 };
 
@@ -349,7 +354,30 @@ const readFlight = (root, repo) => {
 export const readPlansInFlight = (root, { robustnessDeps, repo = openRepo(root, { robustnessDeps }) } = {}) =>
   readOnce(repo, readFlight, getRepoRoot(repo, true), repo);
 
-const getFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { robustnessDeps }), plan } = {}) => {
+const readOwnPlan = (root, repo, plan, document, plans) => {
+  const listed = plans.find(({ identity }) => identity === plan);
+  if (listed && (!document || listed.text === document.text)) return listed;
+  if (document) return judgePlan(root, document, { repo });
+  const read = readOnce(repo, readRegularFileNoFollow, resolve(root, plan));
+  if (read.outcome === READ_ABSENT) return null;
+  if (read.outcome !== READ_OK) throw usageError(formatPlanReadError(plan, read));
+  return judgePlan(root, parsePlanDocument(plan, read.content), { repo });
+};
+
+const readOtherPlans = (root, repo, plan, approvalFacts, document) => {
+  const { digestPlan, heldDigests } = approvalFacts;
+  const { plans } = readPlansInFlight(root, { repo });
+  if (!plans.some(({ identity, accepted }) => accepted && identity !== plan)) return [];
+  const own = readOwnPlan(root, repo, plan, document, plans);
+  const ownDigest = own ? digestPlan(own.text, own) : null;
+  return plans.filter(({ identity, accepted }) => accepted && identity !== plan).flatMap((verdict) => {
+    const digest = digestPlan(verdict.text, verdict);
+    return digest === ownDigest ? [] : [{ identity: verdict.identity, digest, held: heldDigests.has(digest),
+      story: getStoryIdentity(verdict.story), paths: verdict.paths }];
+  });
+};
+
+const getFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { robustnessDeps }), plan, approvalFacts, document } = {}) => {
   const sourceScope = () => readOnce(repo, loadSourceScope, getRepoRoot(repo), repo);
   const storyFacts = () => readOnce(repo, readStoryFacts, getRepoRoot(repo), repo);
   const pathFacts = Object.create(null);
@@ -378,11 +406,16 @@ const getFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { ro
     },
   };
   if (plan === undefined) delete facts.otherPlanCreates;
+  if (plan !== undefined && approvalFacts !== undefined) {
+    const getOtherPlans = () => readOtherPlans(root, repo, plan, approvalFacts, document);
+    const cache = new Map();
+    Object.defineProperty(facts, 'otherPlans', { enumerable: true, get: () => remember(cache, plan, getOtherPlans) });
+  }
   return facts;
 };
 
-export const buildFacts = (root, { paths = [], robustnessDeps, repo, plan } = {}) => {
-  const facts = { ...getFacts(root, { paths, robustnessDeps, repo, plan }) };
+export const buildFacts = (root, { paths = [], robustnessDeps, repo, plan, approvalFacts } = {}) => {
+  const facts = { ...getFacts(root, { paths, robustnessDeps, repo, plan, approvalFacts }) };
   facts.expansions = { ...facts.expansions };
   facts.pathFacts = Object.fromEntries(Object.entries(facts.pathFacts).map(([path, getters]) => {
     const fact = { ...getters };

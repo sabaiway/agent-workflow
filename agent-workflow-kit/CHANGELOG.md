@@ -4,6 +4,38 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 24.3.0 — a story nobody has started never blocks your yes, and every refusal names its next step (AD-244)
+
+**A story written ahead in an epic no longer locks you out of your own plan.** Before, a planned story's owns claim
+refused every other plan touching its paths, naming no way out, and since 24.0.0 that refusal also made the owner's
+yes unrecordable, so the tests and code stages never started. Now a story's claims bind other plans only while a plan
+carrying that story holds a recorded yes on its current text; a draft, an epic written ahead or a story waiting its
+turn binds nothing.
+
+- **Of two plans on one ground, the one whose yes is recorded first runs.** The second plan's
+  `plan-approval record` refuses, naming the first plan and the way out: wait for its Cleanup, carry the change in
+  its story, narrow the claim, or declare a depends-on order. When conflicting records race, both may be written;
+  while the conflicting claim remains binding, or both plans name the same story, at most one passes its next
+  `plan-approval check`. Once the first plan's Cleanup removes it, the second records. Owned and shared claims follow the same rule; today's exemptions are unchanged.
+- **`plan-shape-cli.mjs --check <plan>` prints a wait as a note** (`plan-shape: NOTE — wait: …`), so you are not
+  asked for a yes that the record would then refuse. `--check --in-flight` judges no relation between plans, so a
+  waiting draft never turns your project gate red or blocks the commits of the plan it waits on.
+- **One story is held by one plan.** `plan-approval check` refuses a second plan holding a yes for the same story,
+  naming the plan to carry the change in.
+- **A story plan's yes now covers its story row's owns and shared claims.** Widening them after the yes voids it; the
+  plan is recorded again from its essence file with no new ask, and narrowing them back matches again. An amendment
+  that takes the epic row's claim re-records the same way, before any work under it.
+- **After this upgrade, a story plan approved under an earlier kit no longer matches its record: the agent records it
+  again from its essence file (`docs/plans/<plan stem>-essence.txt`) with no new ask, before any other record.**
+  Until then that story binds nothing. A storyless plan's record still matches.
+- **Every refusal names its step.** The approval's refused line no longer repeats the record command after a
+  structure or contract refusal, a changed contract reads apart from a missing record, and the stage render and
+  `worktrees.mjs provision` say the plan does not pass its approval check, sending you to `waiting-on-approval` only
+  when a record or a new yes is the step. Provision uses MAIN's record only when the work tree has no entry for the
+  plan's current text. `story-scope` names the story row to claim the path in.
+- **`plan-approval check` and `record` now read every plan in flight;** an unreadable plan or plans folder stops them
+  with an error, as it already stops the sweep.
+
 ## 24.2.0 — the upgrade's rules merge is proved rule by rule, and you see what it changed (AD-243)
 
 **When `/agent-workflow-kit upgrade` merges a kit rules file with your local rules file, no rule can be lost or
